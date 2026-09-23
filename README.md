@@ -1,4 +1,4 @@
-# Game Translator — Tradutor de área
+# PixelLingo — Tradução além dos pixels
 
 Seleciona uma região da tela, reconhece o texto em inglês localmente e mostra a tradução para português brasileiro em uma legenda transparente. Independente de emulador, jogo ou aplicativo.
 
@@ -57,8 +57,8 @@ O serviço Rust executa captura, OCR e rede fora do GNOME Shell. A interface GTK
 Clone o repositório na sua máquina. Se ele estiver privado, autentique sua conta GitHub antes de clonar:
 
 ```sh
-git clone https://github.com/leozanchett/game-translator.git
-cd game-translator
+git clone https://github.com/leozanchett/pixellingo.git
+cd pixellingo
 ```
 
 Confira a sessão com `gnome-shell --version` e `echo "$XDG_SESSION_TYPE"`: esta versão foi desenvolvida para GNOME 46 e `wayland`.
