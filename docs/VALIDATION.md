@@ -96,3 +96,11 @@ O coletor lê somente `/proc`; ele não grava telas. Para tempos de OCR/API, exe
 - Removida a limpeza imediata da legenda a cada candidato diferente do OCR. Uma leitura vazia passa a exigir 1,5 segundo de estabilidade; a legenda anterior permanece durante falhas pontuais e durante a estabilização de uma nova frase.
 - 12 testes unitários passaram. Um teste adicional do motor foi executado em D-Bus isolado, usando instantes simulados: mesma frase após uma hora sem expirar, diferenças de espaços, vazio/ruído transitórios, retorno ao texto anterior, nova frase estável, desaparecimento confirmado e pausa manual.
 - O teste do motor usou traduções sintéticas em cache e confirmou zero chamadas à API. Compilação release, formatação e Clippy passaram. Nenhuma alteração da extensão do GNOME foi necessária.
+
+## Oscilações do OCR — 23/09/2026
+
+- Na sessão real, a captura estava identificada como janela e continuava recebendo quadros. Leituras de uma mesma mensagem apresentavam pequenas diferenças que reiniciavam a estabilidade e podiam cancelar uma tradução pendente. A movimentação da janela não foi reproduzida de forma controlada.
+- A estabilidade agora tolera ruído limitado em frases longas, preservando números e negações. Uma variante próxima persistente é confirmada como possível mudança real, inclusive quando o compositor deixa de enviar quadros.
+- Uma leitura vazia isolada não apaga a legenda: são necessárias duas leituras e pelo menos 1,5 segundo. Um recorte retido em memória permite uma confirmação sem novos quadros. Não há gravação de imagens ou diálogos.
+- Passaram 15 testes unitários e três testes do motor em D-Bus isolado. A cobertura inclui ruído durante uma tradução em andamento, manutenção da legenda, desaparecimento confirmado e confirmação única sem novos quadros. Este último usa Tesseract real com imagens sintéticas de diálogo e quadro vazio; confirma recuperação/manutenção do texto, ausência confirmada e zero chamadas à API.
+- Formatação, Clippy e compilação release passaram. Não houve alteração da extensão. A permanência da legenda no emulador real com esta versão ainda precisa ser confirmada pelo usuário; os testes não substituem essa validação nem a medição de desempenho de 15 minutos.

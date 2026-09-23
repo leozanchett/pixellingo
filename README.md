@@ -101,7 +101,7 @@ Na primeira instalação, o GNOME pode precisar que você **saia da sessão e en
 
 **Super + Shift + T** pausa/retoma. O menu também permite selecionar outra área, encerrar a captura, habilitar fundo translúcido e reposicionar a legenda. Durante o reposicionamento, a captura pausa: arraste a legenda e solte. O modo termina automaticamente após 15 segundos. Fora desse modo, a legenda deixa os cliques passarem e não recebe foco.
 
-A legenda não tem prazo de expiração enquanto o texto reconhecido continuar o mesmo. Leituras diferentes precisam estabilizar antes de substituir ou ocultar a legenda anterior; leituras vazias ou descartadas por baixa confiança têm tolerância de 1,5 segundo. Pausar, encerrar ou trocar a região ainda oculta a legenda imediatamente.
+A legenda não tem prazo de expiração enquanto o texto reconhecido continuar o mesmo. Leituras diferentes precisam estabilizar antes de substituir ou ocultar a legenda anterior; leituras vazias ou descartadas por baixa confiança exigem ao menos duas leituras e 1,5 segundo de estabilidade. Se a imagem ficar parada, o serviço confirma uma vez usando o último recorte em memória. Pequenas variações do OCR em frases longas não reiniciam continuamente a espera pela tradução. Pausar, encerrar ou trocar a região ainda oculta a legenda imediatamente.
 
 No modo **Janela do aplicativo**, a captura contém somente a janela autorizada; mover a janela mantém o recorte relativo ao seu conteúdo. A legenda fica inicialmente no rodapé do monitor escolhido e pode ser reposicionada pelo menu. Ela não acompanha a posição da janela e não faz parte do stream capturado.
 
@@ -126,7 +126,7 @@ Se a leitura estiver imprecisa, aumente o tamanho do texto ou a escala de render
 
 - PipeWire fornece a janela ou o monitor autorizado, mas somente o recorte é convertido para escala de cinza e processado. Não há conversão contínua do monitor inteiro.
 - Amostragem limitada a 5 Hz antes do mapeamento dos pixels. Buffer de captura limitado; trabalho antigo não forma uma fila crescente.
-- OCR no máximo duas vezes por segundo, somente após mudanças relevantes. Modelo Tesseract inglês mantido em um trabalhador com OpenMP limitado a um thread.
+- OCR no máximo duas vezes por segundo, após mudanças relevantes ou uma confirmação pendente de leitura vazia/variante próxima. Modelo Tesseract inglês mantido em um trabalhador com OpenMP limitado a um thread.
 - Estabilidade de texto de 500 ms reduz chamadas durante animação de letras. Fundo animado ainda pode exigir OCR repetido.
 - Cache LRU de 2.000 traduções em memória, compartilhado entre seleções durante a vida do serviço.
 - Apenas uma tradução em andamento. Resultados de seleções, pausas e diálogos antigos são descartados.
@@ -165,7 +165,7 @@ Testes de integração adicionais, sem tocar na sessão gráfica atual:
 ./scripts/dev.sh cargo build
 ./scripts/dev.sh dbus-run-session -- env AREA_TRANSLATOR_ISOLATED_TEST=1 bash tests/dbus-smoke.sh
 ./scripts/dev.sh dbus-run-session -- env AREA_TRANSLATOR_ISOLATED_TEST=1 python3 tests/portal-smoke.py
-./scripts/dev.sh dbus-run-session -- env AREA_TRANSLATOR_ISOLATED_TEST=1 cargo test --lib subtitle_survives -- --ignored
+./scripts/dev.sh dbus-run-session -- env AREA_TRANSLATOR_ISOLATED_TEST=1 cargo test --lib -- --ignored
 ./scripts/test-gnome.sh
 xvfb-run -a -s '-screen 0 1200x800x24' bash tests/ui-smoke.sh
 xvfb-run -a -s '-screen 0 1200x800x24' bash tests/ui-smoke.sh window

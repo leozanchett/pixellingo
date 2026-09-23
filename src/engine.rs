@@ -33,6 +33,7 @@ struct OcrResult {
     sequence: u64,
     captured: Instant,
     result: anyhow::Result<OcrOutput>,
+    frame: Option<Frame>,
 }
 struct NetworkResult {
     generation: u64,
@@ -54,6 +55,7 @@ pub struct Engine {
     gate: TextGate,
     fingerprint: Vec<u8>,
     latest: Option<Frame>,
+    confirmation_frame: Option<Frame>,
     sequence: u64,
     dirty: bool,
     ocr_busy: bool,
@@ -95,6 +97,7 @@ impl Engine {
                                     sequence,
                                     captured: frame.captured,
                                     result,
+                                    frame: Some(frame),
                                 })
                                 .is_err()
                             {
@@ -116,6 +119,7 @@ impl Engine {
             gate: TextGate::default(),
             fingerprint: vec![],
             latest: None,
+            confirmation_frame: None,
             sequence: 0,
             dirty: false,
             ocr_busy: false,
@@ -186,6 +190,7 @@ impl Engine {
         self.gate = TextGate::default();
         self.shown = None;
         self.latest = None;
+        self.confirmation_frame = None;
         self.fingerprint.clear();
         self.dirty = false;
         {
@@ -409,6 +414,18 @@ impl Engine {
                 self.latest = Some(frame);
             }
         }
+        // Confirm empty reads and near-matches once, even if the compositor
+        // sends no more frames. Near-matches can be real small wording changes.
+        if !self.dirty
+            && !self.ocr_busy
+            && self.gate.needs_confirmation(Instant::now())
+            && (!self.gate.text.is_empty()
+                || !self.shared.lock().unwrap().snapshot.translation.is_empty())
+            && let Some(frame) = self.confirmation_frame.take()
+        {
+            self.latest = Some(frame);
+            self.dirty = true;
+        }
         if self.dirty
             && !self.ocr_busy
             && self.last_ocr.elapsed() >= OCR_INTERVAL
@@ -443,6 +460,7 @@ impl Engine {
         if result.generation != self.generation || !self.running {
             return;
         }
+        self.confirmation_frame = result.frame;
         match result.result {
             Ok(output) => {
                 {
@@ -644,6 +662,7 @@ mod tests {
                     generation: engine.generation,
                     sequence: engine.sequence,
                     captured: Instant::now(),
+                    frame: None,
                     result: Ok(OcrOutput {
                         text: text.into(),
                         confidence: if text.is_empty() { 0 } else { 95 },
@@ -703,6 +722,14 @@ mod tests {
             .translate_ready(Instant::now() + Duration::from_millis(1600))
             .await;
         assert!(
+            !caption().is_empty(),
+            "One empty read must not clear without confirmation"
+        );
+        read(&mut engine, "").await;
+        engine
+            .translate_ready(Instant::now() + Duration::from_millis(1600))
+            .await;
+        assert!(
             caption().is_empty(),
             "Confirmed disappearance clears the caption"
         );
@@ -718,5 +745,132 @@ mod tests {
             0,
             "Unchanged text must not trigger more API calls"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires native OCR; run with AREA_TRANSLATOR_ISOLATED_TEST=1 under dbus-run-session"]
+    async fn empty_confirmation_runs_once_without_new_capture_frames() {
+        assert_eq!(
+            std::env::var("AREA_TRANSLATOR_ISOLATED_TEST").as_deref(),
+            Ok("1")
+        );
+        for name in ["dialog", "blank"] {
+            let shared =
+                std::sync::Arc::new(std::sync::Mutex::new(crate::service::Shared::default()));
+            let mut engine =
+                Engine::new(shared.clone(), zbus::Connection::session().await.unwrap()).unwrap();
+            let expected = std::fs::read_to_string("tests/fixtures/dialog.txt").unwrap();
+            let expected = expected.trim();
+            engine.running = true;
+            engine.cache.put(expected.into(), "Legenda anterior".into());
+            engine
+                .gate
+                .observe(expected, Instant::now() - Duration::from_secs(3));
+            engine
+                .gate
+                .observe("", Instant::now() - Duration::from_secs(2));
+            engine.show("Legenda anterior").await;
+            let decoder = png::Decoder::new(std::io::BufReader::new(
+                std::fs::File::open(format!("tests/fixtures/{name}.png")).unwrap(),
+            ));
+            let mut reader = decoder.read_info().unwrap();
+            let mut gray = vec![0; reader.output_buffer_size().unwrap()];
+            let info = reader.next_frame(&mut gray).unwrap();
+            gray.truncate(info.buffer_size());
+            assert_eq!(info.color_type, png::ColorType::Grayscale);
+            engine.confirmation_frame = Some(Frame {
+                width: info.width,
+                height: info.height,
+                gray,
+                captured: Instant::now(),
+            });
+            engine.tick().await;
+            assert!(
+                engine.ocr_busy,
+                "Confirm even when the compositor sends no frames"
+            );
+            assert_eq!(
+                shared.lock().unwrap().snapshot.translation,
+                "Legenda anterior"
+            );
+            let result = tokio::time::timeout(Duration::from_secs(10), engine.ocr_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            engine.ocr_result(result).await;
+            engine
+                .translate_ready(Instant::now() + Duration::from_secs(1))
+                .await;
+            assert_eq!(
+                shared.lock().unwrap().snapshot.translation.is_empty(),
+                name == "blank"
+            );
+            engine.last_ocr = Instant::now() - OCR_INTERVAL;
+            engine.tick().await;
+            assert!(
+                !engine.ocr_busy,
+                "Do not repeat OCR indefinitely on unchanged frames"
+            );
+            assert_eq!(shared.lock().unwrap().snapshot.ocr_count, 1);
+            assert_eq!(shared.lock().unwrap().snapshot.api_count, 0);
+            engine.stop().await;
+            assert!(engine.confirmation_frame.is_none());
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "run with AREA_TRANSLATOR_ISOLATED_TEST=1 under dbus-run-session"]
+    async fn noisy_ocr_does_not_cancel_a_translation_in_flight() {
+        assert_eq!(
+            std::env::var("AREA_TRANSLATOR_ISOLATED_TEST").as_deref(),
+            Ok("1")
+        );
+        let phrase = "There is no saved game on the memory card. Would you like to create a new file? Yes No";
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(crate::service::Shared::default()));
+        let mut engine =
+            Engine::new(shared.clone(), zbus::Connection::session().await.unwrap()).unwrap();
+        engine.running = true;
+        engine
+            .gate
+            .observe(phrase, Instant::now() - Duration::from_secs(1));
+        let revision = engine.gate.revision;
+        let generation = engine.generation;
+        let (reply, response) = oneshot::channel();
+        engine.network = Some(tokio::spawn(async move { response.await.unwrap() }));
+        for noise in ["l", "r", "I", "v"] {
+            engine
+                .ocr_result(OcrResult {
+                    generation,
+                    sequence: engine.sequence,
+                    captured: Instant::now(),
+                    frame: None,
+                    result: Ok(OcrOutput {
+                        text: format!("{noise} {phrase} |"),
+                        confidence: 88,
+                        elapsed_ms: 50,
+                    }),
+                })
+                .await;
+            assert!(
+                engine.network.is_some(),
+                "Small OCR variations must not abort the pending translation"
+            );
+            assert_eq!(engine.gate.revision, revision);
+        }
+        reply
+            .send(NetworkResult {
+                generation,
+                revision,
+                source: phrase.into(),
+                elapsed: 350,
+                result: Ok("Não há jogo salvo. Deseja criar um novo arquivo?".into()),
+            })
+            .ok()
+            .unwrap();
+        tokio::task::yield_now().await;
+        engine.finish_network().await;
+        assert!(!shared.lock().unwrap().snapshot.translation.is_empty());
+        assert_eq!(shared.lock().unwrap().snapshot.api_successes, 1);
+        engine.stop().await;
     }
 }
