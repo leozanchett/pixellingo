@@ -29,6 +29,9 @@ assert result is not None and result.returncode == 0, 'Test service did not star
 state = json.loads(ast.literal_eval(result.stdout)[0])
 assert state['state'] == 'idle', state
 assert state['mode'] == 'manual' and state['manual_requests'] == 0
+assert state['ocr_provider'] == 'google_cloud_vision'
+assert state['subtitle_duration_seconds'] == 15
+assert state['ocr_successes'] == 0 and not state['ocr_pending']
 assert call('Refresh').returncode != 0, 'Refresh requires an active region'
 assert call('GetCropPreview').returncode != 0, 'Crop preview requires an active capture'
 assert call('BeginSelection').returncode != 0, 'Capture must require configuration'

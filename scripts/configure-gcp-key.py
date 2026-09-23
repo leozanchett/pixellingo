@@ -35,8 +35,8 @@ def main():
     metadata = json.loads(gcloud('services', 'api-keys', 'describe', args.key_id,
                                 project_flag, '--format=json(name,restrictions)'))
     targets = metadata.get('restrictions', {}).get('apiTargets', [])
-    if len(targets) != 1 or targets[0].get('service') != 'translate.googleapis.com':
-        raise SystemExit('A chave precisa estar restrita exclusivamente a translate.googleapis.com.')
+    if len(targets) != 2 or {target.get('service') for target in targets} != {'translate.googleapis.com', 'vision.googleapis.com'}:
+        raise SystemExit('Restrinja a chave a translate.googleapis.com e vision.googleapis.com.')
     key = gcloud('services', 'api-keys', 'get-key-string', args.key_id,
                  project_flag, '--format=value(keyString)')
     if not key.startswith('AIza') or len(key) > 256:

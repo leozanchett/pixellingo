@@ -5,10 +5,6 @@ use area_translator::{
 use std::sync::{Arc, Mutex};
 
 fn main() -> anyhow::Result<()> {
-    // SAFETY: before starting the runtime or any native library threads.
-    unsafe {
-        std::env::set_var("OMP_THREAD_LIMIT", "1");
-    }
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -21,8 +17,9 @@ fn main() -> anyhow::Result<()> {
             gstreamer::ElementFactory::find("pipewiresrc").is_some(),
             "Instale gstreamer1.0-pipewire."
         );
-        let _ocr = area_translator::ocr::Ocr::new()?;
-        println!("PipeWire/GStreamer e OCR inglês disponíveis.");
+        println!(
+            "PipeWire/GStreamer disponíveis. OCR requer Cloud Vision e credencial configurada."
+        );
         return Ok(());
     }
     tokio::runtime::Builder::new_multi_thread()

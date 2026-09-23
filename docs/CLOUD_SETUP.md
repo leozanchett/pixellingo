@@ -1,15 +1,15 @@
-# Configurar a tradução online
+# Configurar OCR e tradução online
 
-O aplicativo utiliza Google Cloud Translation **Basic (v2)**, modelo NMT, de inglês para português brasileiro. Cada instalação usa sua própria credencial; o repositório não fornece chave compartilhada.
+O aplicativo utiliza Google Cloud Vision **TEXT_DETECTION** para reconhecer o recorte e Google Cloud Translation **Basic (v2)**, modelo NMT, de inglês para português brasileiro. Cada instalação usa sua própria credencial; o repositório não fornece chave compartilhada.
 
 ## Projeto e API
 
 1. No [Console do Google Cloud](https://console.cloud.google.com/), crie ou selecione um projeto para o aplicativo.
 2. Vincule uma conta de faturamento. O Google exige faturamento habilitado para Cloud Translation.
-3. Em **APIs e serviços → Biblioteca**, habilite **Cloud Translation API** (`translate.googleapis.com`).
-4. Em **APIs e serviços → Credenciais**, crie uma chave de API. Nas restrições de API, limite seu uso exclusivamente à **Cloud Translation API**.
+3. Em **APIs e serviços → Biblioteca**, habilite **Cloud Vision API** (`vision.googleapis.com`) e **Cloud Translation API** (`translate.googleapis.com`).
+4. Em **APIs e serviços → Credenciais**, crie uma chave de API. Nas restrições de API, limite seu uso exclusivamente a **Cloud Vision API** e **Cloud Translation API**. Se já usava a versão com OCR local, habilite Vision e acrescente essa API às restrições da chave existente.
 
-Referência: [configuração oficial do Cloud Translation](https://docs.cloud.google.com/translate/docs/setup).
+Referências: [configuração do Cloud Vision](https://docs.cloud.google.com/vision/docs/setup) e [Cloud Translation](https://docs.cloud.google.com/translate/docs/setup).
 
 ## Salvar no aplicativo
 
@@ -31,14 +31,23 @@ python3 scripts/configure-gcp-key.py \
   --key-id YOUR_KEY_RESOURCE_ID
 ```
 
-O script valida a restrição, salva a credencial e faz **uma requisição real** de tradução com frase sintética, sujeita à cobrança da API. A saída mostra identificador do projeto, resultado e latência, sem o valor da chave. Revise essa saída antes de compartilhá-la. O script não cria projetos, não habilita faturamento e não cria chaves.
+O script valida a restrição às duas APIs, salva a credencial e faz **uma requisição real** de tradução com frase sintética, sujeita à cobrança da API. A saída mostra identificador do projeto, resultado e latência, sem o valor da chave. Revise essa saída antes de compartilhá-la. O script não cria projetos, não habilita APIs/faturamento e não cria chaves. A verificação incluída nele testa apenas Translation; o teste opt-in abaixo verifica também Vision.
 
 ## Custos e falhas
 
-Consulte os [preços vigentes](https://cloud.google.com/products/translate/pricing) e configure limites em [cotas de uso](https://docs.cloud.google.com/translate/quotas). O aplicativo mantém cache de traduções, mas não estabelece um teto financeiro. Requisições já recebidas pelo provedor podem ser contabilizadas mesmo após cancelamento local.
+Consulte os preços de [Vision](https://cloud.google.com/vision/pricing) e [Translation](https://cloud.google.com/products/translate/pricing) e configure limites nas cotas de [Vision](https://docs.cloud.google.com/vision/quotas) e [Translation](https://docs.cloud.google.com/translate/quotas). Cada acionamento solicita um OCR online; o cache economiza somente a tradução de textos já conhecidos. O aplicativo mantém cache de traduções, mas não estabelece um teto financeiro. Requisições já recebidas pelo provedor podem ser contabilizadas mesmo após cancelamento local.
 
 Erros temporários usam espera progressiva. Credencial inválida ou cota esgotada suspendem novas chamadas até correção e retomada manual. Não publique a chave em issues, capturas de tela ou logs. Se houver exposição, revogue a credencial no Google Cloud e cadastre uma nova no chaveiro.
 
 ## Primeiro teste
 
-Selecione uma caixa com uma frase curta em inglês, por exemplo `The door is locked. Find the key.`. Aguarde a estabilização e confira a legenda em português. Apenas o texto reconhecido é enviado à API; imagens da captura permanecem em memória local. Veja o [roteiro com emulador](../README.md#primeiro-teste-com-emulador).
+Selecione uma caixa com uma frase curta em inglês, por exemplo `The door is locked. Find the key.`. Espere o texto ficar completo e pressione o atalho configurado. O recorte da área selecionada é enviado ao Cloud Vision e o texto reconhecido segue para Translation. A legenda em português permanece por 15 segundos após ficar pronta. A aplicação não salva capturas em disco. Veja o [roteiro com emulador](../README.md#primeiro-teste-com-emulador).
+
+
+Teste real opcional, com credencial salva no chaveiro:
+
+```sh
+AREA_TRANSLATOR_CLOUD_TEST=1 ./scripts/dev.sh cargo test --test cloud_ocr -- --ignored --nocapture
+```
+
+Envia uma imagem sintética do repositório para Vision e seu texto para Translation. Pode gerar cobrança; não imprime a chave nem salva imagens recebidas da captura. Os testes padrão não acessam as APIs reais.

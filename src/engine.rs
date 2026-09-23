@@ -1,14 +1,13 @@
 use crate::{
     capture::{Capture, crop_now},
-    model::{CaptureSource, Frame, Monitor, Rect, normalize},
-    ocr::{Ocr, OcrOutput},
+    model::{CaptureSource, Monitor, Rect, normalize},
+    ocr::{Ocr, OcrError, OcrOutput},
     service::{PATH, Reply, Service, SharedState},
     translate::{TranslationError, Translator},
 };
 use lru::LruCache;
 use std::{
     num::NonZeroUsize,
-    sync::mpsc as sync,
     time::{Duration, Instant},
 };
 use tokio::{
@@ -25,14 +24,10 @@ pub enum Command {
     Stop(Reply),
     Credential(String, Reply),
 }
-enum OcrJob {
-    Frame(u64, Frame),
-    Reset,
-}
 struct OcrResult {
     generation: u64,
     captured: Instant,
-    result: anyhow::Result<OcrOutput>,
+    result: Result<OcrOutput, OcrError>,
 }
 struct NetworkResult {
     generation: u64,
@@ -50,12 +45,11 @@ pub struct Engine {
     key: String,
     generation: u64,
     running: bool,
-    pending_frame: Option<Frame>,
     manual_pending: bool,
-    ocr_busy: bool,
     text_captured: Instant,
-    ocr_tx: sync::SyncSender<OcrJob>,
-    ocr_rx: mpsc::Receiver<OcrResult>,
+    ocr: Ocr,
+    ocr_task: Option<JoinHandle<OcrResult>>,
+    subtitle_deadline: Option<Instant>,
     network: Option<JoinHandle<NetworkResult>>,
     translator: Translator,
     cache: LruCache<String, String>,
@@ -66,36 +60,6 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(shared: SharedState, connection: zbus::Connection) -> anyhow::Result<Self> {
-        let (ocr_tx, jobs) = sync::sync_channel(1);
-        let (results, ocr_rx) = mpsc::channel(1);
-        std::thread::Builder::new()
-            .name("area-ocr".into())
-            .spawn(move || {
-                let mut ocr = None;
-                while let Ok(job) = jobs.recv() {
-                    match job {
-                        OcrJob::Reset => ocr = None,
-                        OcrJob::Frame(generation, frame) => {
-                            let result = (|| {
-                                if ocr.is_none() {
-                                    ocr = Some(Ocr::new()?);
-                                }
-                                ocr.as_mut().unwrap().recognize(&frame)
-                            })();
-                            if results
-                                .blocking_send(OcrResult {
-                                    generation,
-                                    captured: frame.captured,
-                                    result,
-                                })
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                    }
-                }
-            })?;
         Ok(Self {
             shared,
             connection,
@@ -105,12 +69,11 @@ impl Engine {
             key: String::new(),
             generation: 0,
             running: false,
-            pending_frame: None,
             manual_pending: false,
-            ocr_busy: false,
             text_captured: Instant::now(),
-            ocr_tx,
-            ocr_rx,
+            ocr: Ocr::new()?,
+            ocr_task: None,
+            subtitle_deadline: None,
             network: None,
             translator: Translator::new()?,
             cache: LruCache::new(NonZeroUsize::new(2000).unwrap()),
@@ -129,12 +92,17 @@ impl Engine {
             } else {
                 Duration::from_secs(60)
             };
+            let deadline = self.subtitle_deadline;
             tokio::select! {
                 command = commands.recv() => match command {
                     Some(command) => self.command(command).await,
                     None => break,
                 },
-                Some(result) = self.ocr_rx.recv() => self.ocr_result(result).await,
+                _ = async {
+                    if let Some(deadline) = deadline {
+                        tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                    } else { std::future::pending::<()>().await; }
+                } => self.expire_subtitle(Instant::now()).await,
                 _ = tokio::time::sleep(interval) => self.tick().await,
                 _ = tokio::signal::ctrl_c() => break,
             }
@@ -156,7 +124,21 @@ impl Engine {
         }
     }
 
-    async fn show(&self, text: &str) {
+    async fn expire_subtitle(&mut self, now: Instant) {
+        if self
+            .subtitle_deadline
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.show("").await;
+        }
+    }
+
+    async fn show(&mut self, text: &str) {
+        self.subtitle_deadline = if text.is_empty() {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_secs(15))
+        };
         {
             let mut shared = self.shared.lock().unwrap();
             shared.snapshot.translation = text.into();
@@ -170,7 +152,9 @@ impl Engine {
 
     fn invalidate(&mut self) {
         self.generation += 1;
-        self.pending_frame = None;
+        if let Some(task) = self.ocr_task.take() {
+            task.abort();
+        }
         self.manual_pending = false;
         {
             let mut shared = self.shared.lock().unwrap();
@@ -180,6 +164,7 @@ impl Engine {
             shared.snapshot.ocr_confidence = None;
             shared.snapshot.ocr_confirmations = 0;
             shared.snapshot.api_pending = false;
+            shared.snapshot.ocr_pending = false;
         }
         if let Some(task) = self.network.take() {
             task.abort();
@@ -200,7 +185,6 @@ impl Engine {
         if let Some(capture) = self.capture.take() {
             capture.close().await;
         }
-        let _ = self.ocr_tx.try_send(OcrJob::Reset);
         {
             let mut shared = self.shared.lock().unwrap();
             shared.frames = None;
@@ -330,35 +314,28 @@ impl Engine {
             shared.last_frame_at = Some(frame.captured);
         }
         self.manual_pending = true;
-        self.pending_frame = Some(frame);
-        // Preserve the last successful subtitle until a replacement is ready.
-        self.status("running", "Lendo a captura solicitada…").await;
-        tracing::info!(generation = self.generation, "manual_translation_requested");
-        self.process_pending().await;
-        Ok(())
-    }
 
-    async fn process_pending(&mut self) {
-        if !self.running || !self.manual_pending || self.ocr_busy {
-            return;
+        // Keep the previous caption's deadline while its replacement is requested.
+        self.status("running", "Enviando o recorte ao Google Cloud Vision…")
+            .await;
+        tracing::info!(generation = self.generation, "manual_translation_requested");
+        let ocr = self.ocr.clone();
+        let key = self.key.clone();
+        let generation = self.generation;
+        let captured = frame.captured;
+        {
+            let mut shared = self.shared.lock().unwrap();
+            shared.snapshot.ocr_count += 1;
+            shared.snapshot.ocr_pending = true;
         }
-        let Some(frame) = self.pending_frame.take() else {
-            return;
-        };
-        match self.ocr_tx.try_send(OcrJob::Frame(self.generation, frame)) {
-            Ok(()) => self.ocr_busy = true,
-            Err(sync::TrySendError::Full(OcrJob::Frame(_, frame))) => {
-                self.pending_frame = Some(frame)
+        self.ocr_task = Some(tokio::spawn(async move {
+            OcrResult {
+                generation,
+                captured,
+                result: ocr.recognize(&key, frame).await,
             }
-            _ => {
-                self.manual_pending = false;
-                self.status(
-                    "running",
-                    "OCR indisponível. Encerre e abra o tradutor novamente.",
-                )
-                .await;
-            }
-        }
+        }));
+        Ok(())
     }
 
     async fn select_region(&mut self, region: Rect, monitor: Monitor) -> anyhow::Result<()> {
@@ -403,6 +380,7 @@ impl Engine {
     }
 
     async fn tick(&mut self) {
+        self.expire_subtitle(Instant::now()).await;
         if self.opening.as_ref().is_some_and(|task| task.is_finished()) {
             let result = self.opening.take().unwrap().await;
             self.cancel_open = None;
@@ -443,24 +421,50 @@ impl Engine {
             self.status("idle", "Seleção expirou. Selecione a área novamente.")
                 .await;
         }
-        self.process_pending().await;
+        self.finish_ocr().await;
         self.finish_network().await;
     }
 
+    async fn finish_ocr(&mut self) {
+        if !self
+            .ocr_task
+            .as_ref()
+            .is_some_and(|task| task.is_finished())
+        {
+            return;
+        }
+        let result = self.ocr_task.take().unwrap().await;
+        match result {
+            Ok(result) => self.ocr_result(result).await,
+            Err(_) => {
+                self.shared.lock().unwrap().snapshot.ocr_pending = false;
+                self.manual_pending = false;
+                self.status("running", "OCR interrompido. Tente novamente pelo atalho.")
+                    .await;
+            }
+        }
+    }
+
     async fn ocr_result(&mut self, result: OcrResult) {
-        self.ocr_busy = false;
         if result.generation != self.generation || !self.running || !self.manual_pending {
             return;
         }
+        self.shared.lock().unwrap().snapshot.ocr_pending = false;
         let output = match result.result {
             Ok(output) => output,
-            Err(_) => {
+            Err(error) => {
                 self.manual_pending = false;
-                self.status(
-                    "running",
-                    "Falha no OCR. Pressione o atalho para tentar novamente.",
-                )
-                .await;
+                if error.suspends() {
+                    self.running = false;
+                    if let Some(capture) = &self.capture {
+                        let _ = capture.pause(true);
+                    }
+                    self.status("blocked", error.message()).await;
+                } else {
+                    self.failures = (self.failures + 1).min(5);
+                    self.retry_at = Instant::now() + Duration::from_secs(1 << self.failures);
+                    self.status("running", error.message()).await;
+                }
                 return;
             }
         };
@@ -468,16 +472,17 @@ impl Engine {
         self.text_captured = result.captured;
         {
             let mut shared = self.shared.lock().unwrap();
-            shared.snapshot.ocr_count += 1;
+            shared.snapshot.ocr_successes += 1;
+            shared.snapshot.ocr_api_ms = output.api_ms;
             shared.snapshot.ocr_ms = output.elapsed_ms;
             shared.snapshot.ocr_text = source.clone();
-            shared.snapshot.ocr_confidence = Some(output.confidence);
+            shared.snapshot.ocr_confidence = None;
             shared.snapshot.ocr_confirmations = 1;
         }
         tracing::info!(
             generation = self.generation,
             ocr_ms = output.elapsed_ms,
-            confidence = output.confidence,
+            ocr_api_ms = output.api_ms,
             characters = source.chars().count(),
             "manual_ocr"
         );
@@ -613,6 +618,7 @@ mod tests {
             crate::capture::SharedFrames::default(),
         )));
         fixture(&mut engine, "dialog");
+        let _ = cloud_server(&mut engine, 200).await;
         engine
     }
 
@@ -658,11 +664,81 @@ mod tests {
     }
 
     async fn ocr(engine: &mut Engine) {
-        let result = tokio::time::timeout(Duration::from_secs(10), engine.ocr_rx.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        engine.ocr_result(result).await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while engine
+                .ocr_task
+                .as_ref()
+                .is_some_and(|task| !task.is_finished())
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        engine.finish_ocr().await;
+    }
+
+    async fn cloud_server(engine: &mut Engine, status: u16) -> (Arc<AtomicUsize>, JoinHandle<()>) {
+        use base64::Engine as _;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        engine.ocr = Ocr::with_test_endpoint(format!("http://{}", listener.local_addr().unwrap()));
+        let count = Arc::new(AtomicUsize::new(0));
+        let requests = count.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = vec![];
+                loop {
+                    let mut bytes = [0; 4096];
+                    let n = socket.read(&mut bytes).await.unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&bytes[..n]);
+                    if let Some((headers, body)) = std::str::from_utf8(&request)
+                        .unwrap()
+                        .split_once("\r\n\r\n")
+                    {
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length: ")
+                                    .map(str::to_owned)
+                            })
+                            .unwrap()
+                            .parse::<usize>()
+                            .unwrap();
+                        if body.len() >= length {
+                            break;
+                        }
+                    }
+                }
+                let request = String::from_utf8(request).unwrap();
+                let Some((_, body)) = request.split_once("\r\n\r\n") else {
+                    continue;
+                };
+                let body: serde_json::Value = serde_json::from_str(body).unwrap();
+                let png = base64::engine::general_purpose::STANDARD
+                    .decode(body["requests"][0]["image"]["content"].as_str().unwrap())
+                    .unwrap();
+                let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+                    .read_info()
+                    .unwrap();
+                let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+                reader.next_frame(&mut pixels).unwrap();
+                requests.fetch_add(1, Ordering::SeqCst);
+                let body = if status != 200 {
+                    "{}"
+                } else if pixels.iter().all(|p| *p > 240) {
+                    r#"{"responses":[{}]}"#
+                } else {
+                    r#"{"responses":[{"fullTextAnnotation":{"text":"Detected game text."}}]}"#
+                };
+                let _ = socket.write_all(format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await;
+            }
+        });
+        (count, task)
     }
 
     async fn finish(engine: &mut Engine) {
@@ -732,7 +808,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "native OCR; run under isolated D-Bus with AREA_TRANSLATOR_ISOLATED_TEST=1"]
+    #[ignore = "run under isolated D-Bus with AREA_TRANSLATOR_ISOLATED_TEST=1"]
     async fn only_explicit_requests_run_one_ocr_and_cache_avoids_repeat_api() {
         let mut e = engine().await;
         let (count, task) = server(&mut e, 200).await;
@@ -785,13 +861,13 @@ mod tests {
         assert_eq!(e.shared.lock().unwrap().snapshot.ocr_count, 3);
         assert_eq!(e.shared.lock().unwrap().snapshot.manual_requests, 3);
         assert_eq!(count.load(Ordering::SeqCst), 1);
-        assert!(!e.ocr_busy && !e.manual_pending && e.network.is_none());
+        assert!(e.ocr_task.is_none() && !e.manual_pending && e.network.is_none());
         e.stop().await;
         task.abort();
     }
 
     #[tokio::test]
-    #[ignore = "native OCR; run under isolated D-Bus with AREA_TRANSLATOR_ISOLATED_TEST=1"]
+    #[ignore = "run under isolated D-Bus with AREA_TRANSLATOR_ISOLATED_TEST=1"]
     async fn api_errors_never_retry_without_another_keypress() {
         for status in [503, 403, 429] {
             let mut e = engine().await;
@@ -831,7 +907,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "native OCR; run under isolated D-Bus with AREA_TRANSLATOR_ISOLATED_TEST=1"]
+    #[ignore = "run under isolated D-Bus with AREA_TRANSLATOR_ISOLATED_TEST=1"]
     async fn pause_and_stop_reject_in_flight_ocr_and_disallow_shortcuts() {
         let mut e = engine().await;
         e.refresh().await.unwrap();
@@ -840,11 +916,12 @@ mod tests {
         receive.await.unwrap().unwrap();
         assert!(e.refresh().await.is_err());
         ocr(&mut e).await;
-        assert_eq!(e.shared.lock().unwrap().snapshot.ocr_count, 0);
+        assert_eq!(e.shared.lock().unwrap().snapshot.ocr_successes, 0);
+        assert!(!e.shared.lock().unwrap().snapshot.ocr_pending);
         assert!(e.network.is_none());
         e.stop().await;
         assert!(e.refresh().await.is_err());
-        assert!(e.pending_frame.is_none());
+        assert!(e.ocr_task.is_none());
     }
 
     #[tokio::test]
@@ -875,5 +952,102 @@ mod tests {
         assert!(e.shared.lock().unwrap().snapshot.translation.is_empty());
         assert_eq!(e.shared.lock().unwrap().snapshot.api_successes, 0);
         e.stop().await;
+    }
+    #[tokio::test]
+    #[ignore = "run under isolated D-Bus with AREA_TRANSLATOR_ISOLATED_TEST=1"]
+    async fn cloud_ocr_errors_do_not_translate_or_retry_automatically() {
+        for status in [503, 403, 429] {
+            let mut e = engine().await;
+            let (count, task) = cloud_server(&mut e, status).await;
+            e.show("Previous subtitle").await;
+            let deadline = e.subtitle_deadline;
+            e.refresh().await.unwrap();
+            ocr(&mut e).await;
+            assert_eq!(e.subtitle_deadline, deadline);
+            assert_eq!(e.shared.lock().unwrap().snapshot.api_count, 0);
+            assert_eq!(e.shared.lock().unwrap().snapshot.ocr_successes, 0);
+            assert!(!e.manual_pending && !e.shared.lock().unwrap().snapshot.ocr_pending);
+            e.retry_at = Instant::now();
+            for _ in 0..20 {
+                e.tick().await;
+            }
+            assert_eq!(count.load(Ordering::SeqCst), 1);
+            if status != 503 {
+                assert!(!e.running);
+                assert!(e.refresh().await.is_err());
+            }
+            e.stop().await;
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "run under isolated D-Bus with AREA_TRANSLATOR_ISOLATED_TEST=1"]
+    async fn actor_expires_caption_without_commands_or_capture() {
+        let mut e = engine().await;
+        e.show("Synthetic caption").await;
+        let shared = e.shared.clone();
+        let (tx, rx) = mpsc::channel(1);
+        let actor = tokio::spawn(e.run(rx));
+        tokio::time::sleep(Duration::from_secs(14)).await;
+        assert_eq!(
+            shared.lock().unwrap().snapshot.translation,
+            "Synthetic caption"
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !shared.lock().unwrap().snapshot.translation.is_empty() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("Caption must expire independently of the 60 second idle tick");
+        assert_eq!(shared.lock().unwrap().snapshot.ocr_count, 0);
+        assert_eq!(shared.lock().unwrap().snapshot.api_count, 0);
+        drop(tx);
+        actor.await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "run under isolated D-Bus with AREA_TRANSLATOR_ISOLATED_TEST=1"]
+    async fn subtitles_expire_in_fifteen_seconds_and_cache_starts_new_deadline() {
+        let mut e = engine().await;
+        let before = Instant::now();
+        e.show("Previous subtitle").await;
+        let first = e.subtitle_deadline.unwrap();
+        assert!(first >= before + Duration::from_secs(15));
+        assert!(first <= Instant::now() + Duration::from_secs(15));
+        e.expire_subtitle(first - Duration::from_millis(1)).await;
+        assert!(!e.shared.lock().unwrap().snapshot.translation.is_empty());
+        e.cache
+            .put("Detected game text.".into(), "Cached subtitle".into());
+        e.refresh().await.unwrap();
+        assert_eq!(
+            e.subtitle_deadline,
+            Some(first),
+            "New request must not extend old subtitle"
+        );
+        ocr(&mut e).await;
+        let second = e.subtitle_deadline.unwrap();
+        assert!(second > first);
+        e.expire_subtitle(first).await;
+        assert_eq!(
+            e.shared.lock().unwrap().snapshot.translation,
+            "Cached subtitle"
+        );
+        fixture(&mut e, "blank");
+        e.refresh().await.unwrap();
+        ocr(&mut e).await;
+        assert_eq!(
+            e.subtitle_deadline,
+            Some(second),
+            "Empty OCR must not extend subtitle"
+        );
+        e.manual_pending = true; // A pending API must not block the subtitle timer.
+        e.expire_subtitle(second).await;
+        assert!(e.shared.lock().unwrap().snapshot.translation.is_empty());
+        assert!(e.manual_pending && e.subtitle_deadline.is_none());
+        e.show("Next subtitle").await;
+        e.stop().await;
+        assert!(e.subtitle_deadline.is_none());
     }
 }

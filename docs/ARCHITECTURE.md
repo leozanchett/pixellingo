@@ -2,7 +2,7 @@
 
 ## Fluxo
 
-`Portal ScreenCast → PipeWire/GStreamer → acionamento manual → recorte → uma leitura Tesseract → cache/Google Cloud → D-Bus → GNOME Shell`
+`Portal ScreenCast → PipeWire/GStreamer → acionamento manual → recorte → PNG em memória → Google Cloud Vision → cache/Google Cloud Translation → D-Bus → GNOME Shell`
 
 Rust mantém o processamento e a rede fora do Shell. GTK4/GJS é usado somente para chave e seleção. A extensão usa `St.Label` como chrome acima das janelas em tela cheia, sem região de entrada nem foco durante a tradução.
 
@@ -31,7 +31,7 @@ Durante a seleção existe somente uma prévia RGB congelada. `GetPreview` a cod
 | `SetRegion` | `ss` | JSON de `Rect` e `Monitor`; valida e prepara a área, sem iniciar OCR/rede. |
 | `Pause` | — | Invalida trabalhos e pausa captura/rede. |
 | `Resume` | — | Prepara a área existente e libera bloqueio de API após ação manual; aguarda outro acionamento. |
-| `Refresh` | — | Requer região ativa; faz um recorte e uma leitura OCR, mantendo captura, modelo, legenda anterior e cache. Não retoma pausa/bloqueio. Agrupa acionamentos enquanto ocupado. |
+| `Refresh` | — | Requer região ativa; faz um recorte e uma leitura OCR, mantendo captura e cache; a legenda anterior conserva seu prazo restante. Não retoma pausa/bloqueio. Agrupa acionamentos enquanto ocupado. |
 | `Stop` | — | Idempotente; fecha captura e limpa legenda. |
 
 `Rect = {x: u32, y: u32, width: u32, height: u32}`.
@@ -46,38 +46,40 @@ O snapshot inclui `source_type`: `monitor`, `window` ou nulo sem captura. Na par
 
 Estados: `idle`, `opening`, `selecting`, `running`, `paused`, `blocked`, `error`.
 
-Snapshot inclui `ocr_count`, `api_count`, `cache_hits`, `characters_sent`, `ocr_ms`, `api_ms`, `latency_ms`. Contagens acumulam durante a vida do processo. Os tempos são da última operação, não percentis; o log estruturado permite coletar a distribuição. `api_count` inclui tentativas que falharam. `latency_ms` mede desde o quadro que originou o texto, incluindo OCR e espera de rede, sem espera por estabilidade.
+Snapshot inclui `ocr_provider` (`google_cloud_vision`), `ocr_count` (tentativas), `ocr_successes`, `ocr_pending`, `ocr_api_ms`, `api_count`, `cache_hits`, `characters_sent`, `ocr_ms`, `api_ms`, `latency_ms` e `subtitle_duration_seconds` (15). Contagens acumulam durante a vida do processo. Os tempos são da última operação, não percentis; o log estruturado permite coletar a distribuição. `api_count` inclui tentativas que falharam. `latency_ms` mede desde o quadro que originou o texto, incluindo OCR e espera de rede, sem espera por estabilidade.
 
-O diagnóstico sob demanda consulta `GetStatus` uma vez por segundo, somente enquanto a página estiver aberta. `mode` é sempre `manual`; `manual_requests` acumula os acionamentos aceitos. `captured_frames` conta o recorte do pedido atual; `last_frame_age_ms` mede o tempo desde esse recorte (nulo antes do primeiro). `ocr_text` e `ocr_confidence` mostram a última leitura aceita e a confiança; texto de baixa confiança fica vazio. Esses campos são limpos na pausa, parada ou troca de área. `api_pending` indica uma chamada em andamento e `api_successes` conta respostas válidas durante a vida do serviço. Texto reconhecido e traduzido permanecem em memória e não são incluídos nos logs. A página de diagnóstico deve ficar fora da região selecionada.
+O diagnóstico sob demanda consulta `GetStatus` uma vez por segundo, somente enquanto a página estiver aberta. `mode` é sempre `manual`; `manual_requests` acumula os acionamentos aceitos. `captured_frames` conta o recorte do pedido atual; `last_frame_age_ms` mede o tempo desde esse recorte (nulo antes do primeiro). `ocr_text` mostra a última leitura aceita; `ocr_confidence` permanece nulo por compatibilidade, sem inventar uma confiança agregada para o Cloud Vision. Esses campos são limpos na pausa, parada ou troca de área. `api_pending` indica uma chamada em andamento e `api_successes` conta respostas válidas durante a vida do serviço. Texto reconhecido e traduzido permanecem em memória e não são incluídos nos logs. A página de diagnóstico deve ficar fora da região selecionada.
 
 A extensão exporta `io.github.areatranslator.Overlay.GetMonitors() → s` no nome `org.gnome.Shell`, objeto `/io/github/areatranslator/Overlay`, com os monitores atuais em JSON. `GetVersion() → u` retorna `2`; a interface consulta essa versão antes de iniciar uma captura de janela para evitar usar a geometria de uma extensão antiga ainda carregada no Shell.
 
 ## Concorrência e limites
 
-Um ator Tokio serializa comandos e estado. Dois threads de runtime servem I/O; um trabalhador nativo mantém o handle Tesseract. Cada pedido manual faz exatamente um OCR e, para texto não vazio fora do cache, no máximo uma chamada à API. Seleção, retomada e chegada de quadros não criam pedidos. A detecção automática de mudanças e o mecanismo de três confirmações foram removidos.
+Um ator Tokio serializa comandos e estado. Dois threads de runtime servem I/O; a codificação PNG limitada a 4 megapixels usa `spawn_blocking`. Cada pedido manual faz uma chamada assíncrona ao Cloud Vision e, para texto não vazio fora do cache, no máximo uma chamada ao Translation. Seleção, retomada e chegada de quadros não criam pedidos. A detecção automática de mudanças e o mecanismo de três confirmações foram removidos.
 
 Existe no máximo um pedido manual em andamento. Pressões adicionais enquanto ocupado são agrupadas; não há fila crescente. Pausa, parada e troca de região invalidam a geração e cancelam a rede. Resultados antigos de OCR/rede são descartados. A geração identifica cada pedido; a revisão do sinal acompanha esse identificador.
 
-A legenda anterior permanece enquanto o novo pedido é processado e em leituras vazias ou falhas. Uma resposta válida a substitui; pausa, parada e troca da área a limpam. Falhas temporárias impõem espera progressiva para o próximo acionamento, sem agendar nova chamada; falhas de autenticação/cota bloqueiam novos pedidos até retomada explícita.
+Cada tradução pronta, inclusive do cache, inicia um prazo monotônico de 15 segundos. O ator aguarda esse prazo independentemente da captura e da rede, emite `TranslationChanged` vazio e limpa o snapshot ao expirar. Um novo pedido, OCR vazio ou erro não prolonga o prazo anterior. Uma resposta válida substitui a legenda e inicia novo prazo; pausa, parada e troca da área a limpam e cancelam o prazo. O temporizador atual é sempre consultado, evitando que um prazo antigo apague uma legenda nova. Falhas temporárias impõem espera progressiva para o próximo acionamento, sem agendar nova chamada; falhas de autenticação/cota bloqueiam novos pedidos até retomada explícita.
 
-`manual_translation_requested` registra geração; `manual_ocr` registra tempo, confiança e quantidade de caracteres. `ocr_confirmations` permanece por compatibilidade, com zero antes da leitura e um após ela. Imagens, textos e credenciais continuam fora dos logs.
+`manual_translation_requested` registra geração; `manual_ocr` registra tempo total, tempo de API de OCR e quantidade de caracteres. `ocr_confirmations` permanece por compatibilidade, com zero antes da leitura e um após ela. Imagens, textos e credenciais continuam fora dos logs.
 
-A normalização para envio e cache preserva letras, caixa e pontuação, uniformizando apenas espaços. O cache continua usando chaves exatas, sem correspondência aproximada. O cache guarda 2.000 pares para a combinação fixa inglês → PT-BR/NMT. OCR de baixa confiança é considerado vazio, evitando enviar ruído. Requisições têm timeout total de 10 segundos, conexão de 5 segundos e no máximo 4.000 caracteres por texto. A pausa não garante cancelamento da cobrança de uma requisição já recebida pelo Google.
+A normalização para envio e cache preserva letras, caixa e pontuação, uniformizando apenas espaços. O cache continua usando chaves exatas, sem correspondência aproximada. O cache guarda 2.000 pares para a combinação fixa inglês → PT-BR/NMT. OCR sem texto não dispara tradução. Cloud Vision tem timeout total de 15 segundos; Translation, de 10 segundos. Ambos têm conexão limitada a 5 segundos; a tradução aceita no máximo 4.000 caracteres por texto. A pausa não garante cancelamento da cobrança de uma requisição já recebida pelo Google.
 
 Nenhum endpoint HTTP é exposto. Não há telemetria. A interface D-Bus pertence à sessão do usuário; outros processos da mesma sessão têm a mesma fronteira de confiança do desktop.
 
-## Texto curto em cenas grandes
+## OCR online e diagnóstico
 
-Recortes com mais de 400 pixels de altura usam Tesseract PSM 11 (texto esparso), com saída TSV para agrupar palavras por linha. O modo automático PSM 3 podia retornar vazio mesmo com uma frase curta legível. Linhas são aceitas por confiança média ponderada pelos caracteres alfanuméricos (mínimo 65). A filtragem preserva a linha completa, inclusive palavras incertas como negações e números. Fragmentos isolados com menos de três caracteres são descartados, salvo algumas opções curtas comuns e números de dois ou mais dígitos com confiança alta. Isso reduz falsos textos do cenário, mas pode omitir rótulos curtos; seleções justas com até 400 pixels continuam no modo de bloco PSM 6, sem esse filtro.
+O serviço envia um PNG em escala de cinza do recorte via `POST https://vision.googleapis.com/v1/images:annotate`, com `TEXT_DETECTION`, dica de idioma `en` e credencial no cabeçalho `X-Goog-Api-Key`. A imagem é codificada em base64 dentro do JSON; o limite de 4 megapixels mantém esse envio abaixo do limite de 10 MB do JSON. Não são enviados o monitor inteiro, a prévia ou um endereço público da imagem.
+
+A leitura usa `fullTextAnnotation.text` ou, na ausência, a descrição completa da primeira `textAnnotations`, sem concatenar novamente as palavras individuais. Resposta sem texto é válida; resposta malformada ou erro por imagem, mesmo sob HTTP 200, é falha. Mensagens de erro do provedor não são exibidas nem registradas literalmente. Não há fallback Tesseract nem chamadas automáticas de repetição.
 
 `GetCropPreview() → ay` recorta o buffer mais recente e codifica PNG em memória sob demanda. Não precisa esperar um novo quadro em uma cena estática. Uma captura pausada ou sem quadro disponível é rejeitada. Não dispara OCR nem rede. O buffer retido é liberado antes de pausar ou fechar o pipeline.
 
-Referência do formato TSV: [documentação do Tesseract](https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html#tsv-output).
+Referências: [OCR do Cloud Vision](https://docs.cloud.google.com/vision/docs/ocr) e [formato da requisição](https://docs.cloud.google.com/vision/docs/request).
 
 ## Atualização manual
 
 O instalador registra `Super + Shift + R` como atalho personalizado do GNOME, preservando os demais atalhos e uma combinação alterada pelo usuário em reinstalações. O cliente GJS efêmero chama `Refresh` com `NO_AUTO_START`: não abre GTK, toma foco nem inicia o serviço quando ele estiver parado. A desinstalação remove somente a entrada própria.
 
-O atalho usa `Refresh` para solicitar uma tradução manual. Quando não existe captura ativa, o cliente mostra uma notificação local e encerra, sem abrir GTK nem tomar foco. Acionamentos válidos mantêm a legenda anterior durante a operação.
+O atalho usa `Refresh` para solicitar uma tradução manual. Quando não existe captura ativa, o cliente mostra uma notificação local e encerra, sem abrir GTK nem tomar foco. Acionamentos válidos conservam somente o prazo restante da legenda anterior durante a operação.
 
 A configuração GTK grava a combinação na mesma entrada de GSettings do atalho global. O gravador suspende os atalhos do sistema somente enquanto a janela modal está aberta e os restaura ao fechá-la. Cancelar não grava alterações; desativar grava uma combinação vazia, preservada pelo instalador. São aceitas combinações com Ctrl/Alt/Super ou teclas de função, com validação contra atalhos personalizados e esquemas comuns do GNOME, incluindo pausa/retomada da extensão quando instalada. Atalhos internos de outros aplicativos não são enumerados.

@@ -13,7 +13,7 @@ futures-util = "0.3"
 gstreamer = { version = "0.24", features = ["v1_22"] }
 gstreamer-app = { version = "0.24", features = ["v1_22"] }
 gstreamer-video = { version = "0.24", features = ["v1_22"] }
-libloading = "0.8"
+base64 = "0.22"
 lru = "0.16"
 png = "0.18"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

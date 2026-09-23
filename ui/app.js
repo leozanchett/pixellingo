@@ -77,9 +77,9 @@ function settings() {
     window.set_default_size(560, 300);
     const box = page('Tradutor de área', 'Modo manual: inglês → português brasileiro. A tradução só acontece ao pressionar o atalho ou clicar em Traduzir agora.');
     const entry = new Gtk.PasswordEntry({placeholder_text: credentialsReady
-        ? 'Chave salva no chaveiro — preencha apenas para trocar' : 'Chave da Cloud Translation API', show_peek_icon: true});
+        ? 'Chave salva no chaveiro — preencha apenas para trocar' : 'Chave do Google Cloud: Vision + Translation', show_peek_icon: true});
     box.append(entry);
-    box.append(new Gtk.Label({label: 'As imagens ficam neste computador. Somente o texto é enviado ao Google Cloud. O serviço pode cobrar pelo uso.', wrap: true, xalign: 0}));
+    box.append(new Gtk.Label({label: 'Ao acionar a tradução, o recorte da imagem é enviado ao Google Cloud Vision; o texto extraído segue para o Google Translate. As duas APIs podem cobrar pelo uso. Nenhuma captura é salva em disco.', wrap: true, xalign: 0}));
     box.append(new Gtk.Label({label: 'O que capturar?', xalign: 0}));
     const sourcePicker = Gtk.DropDown.new_from_strings(['Janela do aplicativo', 'Monitor inteiro']);
     sourcePicker.selected = captureSource === 'window' ? 0 : 1;
@@ -113,7 +113,7 @@ function settings() {
     }));
     box.append(button('Diagnóstico: captura, OCR e tradução', diagnostics));
     box.append(message);
-    box.append(new Gtk.Label({label: 'Depois de selecionar a área, volte ao jogo e pressione o atalho quando o texto estiver completo. A legenda permanece até a próxima tradução ou até pausar/encerrar a captura.', wrap: true, xalign: 0}));
+    box.append(new Gtk.Label({label: 'Depois de selecionar a área, volte ao jogo e pressione o atalho quando o texto estiver completo. Cada tradução fica visível por 15 segundos após ficar pronta.', wrap: true, xalign: 0}));
 }
 
 function diagnostics() {
@@ -140,7 +140,7 @@ function diagnostics() {
             crop.visible = true;
         } finally { cropPending = false; }
     }));
-    const ocr = field('2. Leitura do OCR');
+    const ocr = field('2. OCR — Google Cloud Vision');
     const source = field('Texto reconhecido');
     const network = field('3. Tradução');
     const translated = field('Última tradução');
@@ -161,12 +161,12 @@ function diagnostics() {
             const s = JSON.parse(json);
             capture.label = !s.region ? 'Sem área ativa. Volte e selecione a caixa de diálogo.'
                 : `${s.source_type === 'window' ? 'Janela' : 'Monitor'}: ${s.region.width} × ${s.region.height} px; ${s.manual_requests ?? 0} pedidos manuais; último recorte há ${s.last_frame_age_ms ?? '—'} ms.`;
-            ocr.label = `${s.ocr_count ?? 0} leituras; confiança da última: ${s.ocr_confidence ?? '—'}/100; tempo: ${s.ocr_ms ?? 0} ms.`;
+            ocr.label = `${s.ocr_count ?? 0} pedidos; ${s.ocr_successes ?? 0} concluídos; total: ${s.ocr_ms ?? 0} ms; API: ${s.ocr_api_ms ?? 0} ms.${s.ocr_pending ? ' Aguardando o Cloud Vision…' : ''}`;
             ocr.label += ' Uma leitura por acionamento, sem OCR automático.';
-            source.label = s.ocr_text || (s.ocr_confidence == null ? 'Nenhuma leitura nesta sessão.'
+            source.label = s.ocr_text || (!s.ocr_confirmations ? 'Nenhuma leitura concluída neste pedido.'
                 : 'Nenhum texto legível encontrado. Confira se a frase aparece inteira na imagem do recorte.');
             network.label = `${s.api_count ?? 0} tentativas; ${s.api_successes ?? '—'} concluídas; ${s.cache_hits ?? 0} usos do cache; API: ${s.api_ms ?? 0} ms.${s.api_pending ? ' Aguardando resposta do Google…' : ''}`;
-            translated.label = s.translation || 'Nenhuma tradução exibida neste momento.';
+            translated.label = s.translation || 'Sem legenda ativa. Cada tradução fica visível por 15 segundos.';
             status.label = s.message;
         } catch (error) {
             if (revision === pageRevision) status.label = `Não foi possível consultar o serviço: ${error.message}`;

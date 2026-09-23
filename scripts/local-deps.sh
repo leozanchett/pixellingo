@@ -5,7 +5,7 @@ project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 mkdir -p "$project_dir/.deps/debs" "$project_dir/.deps/root"
 cd "$project_dir/.deps/debs"
 apt-get download libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-    libunwind-dev libdw-dev libelf-dev liborc-0.4-dev libtesseract5 liblept5 tesseract-ocr-eng
+    libunwind-dev libdw-dev libelf-dev liborc-0.4-dev
 for package in ./*.deb; do dpkg-deb -x "$package" "$project_dir/.deps/root"; done
 python3 - "$project_dir/.deps/root" <<'PY'
 from pathlib import Path

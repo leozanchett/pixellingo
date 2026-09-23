@@ -1,4 +1,8 @@
-# Validação — 22/09/2026
+# Validação
+
+Este relatório mantém o histórico de versões. A versão atual usa Cloud Vision, acionamento manual e legenda por 15 segundos; as medições de Tesseract abaixo são históricas e não representam o OCR online.
+
+# Histórico — 22/09/2026
 
 ## Ambiente
 
@@ -154,3 +158,14 @@ Esta versão substitui o fluxo automático descrito nas seções históricas aci
 - Serviço e interface instalados localmente; atalho Ctrl+A preservado. O snapshot instalado informa modo manual, inicialmente com zero pedidos, OCRs e chamadas à API. O teste físico do atalho no emulador e a medição de desempenho de 15 minutos ainda dependem de validação real.
 
 - No teste conduzido pelo usuário após a instalação, a captura foi selecionada e retomada. O serviço registrou três pedidos manuais, três OCRs e três respostas válidas do Google, sem OCRs adicionais além dos pedidos recebidos. O snapshot manteve tradução presente após as respostas. Essa observação valida o caminho real de captura/OCR/API para esses acionamentos; não substitui confirmação visual da legenda nem a medição de desempenho.
+
+## Cloud Vision e legenda por 15 segundos — 23/09/2026
+
+Esta versão substitui o Tesseract pelo Google Cloud Vision `TEXT_DETECTION`. O acionamento continua exclusivamente manual. A imagem PNG em escala de cinza do recorte é enviada ao Google; a aplicação não salva capturas em disco. O cache economiza chamadas de tradução, mas não elimina o OCR online de cada acionamento.
+
+- Uma chamada real com a imagem pública `tests/fixtures/dialog.png` reconheceu os 33 caracteres esperados (após normalização de espaços), em 484 ms totais / 482 ms de API. O texto foi traduzido para PT-BR na API real em 375 ms, com 40 caracteres de saída. Credencial acessada do chaveiro em memória, sem exposição no comando ou saída. Esses tempos são de uma amostra sintética, não um benchmark de jogo.
+- Passaram dez testes unitários e sete testes do motor em D-Bus isolado. Os servidores HTTP locais verificam PNG do recorte, chave no cabeçalho, uma operação por acionamento, cache, OCR vazio, respostas malformadas, erros por imagem sob HTTP 200, autenticação/cota e ausência de repetição automática. Pausa/parada invalidam operações pendentes.
+- O temporizador foi executado por 15 segundos reais no ator, sem captura ou comandos: a legenda estava presente aos 14 segundos e foi removida ao vencer o prazo, sem OCR ou tradução adicional. Outros casos verificaram novo prazo para resposta do cache, descarte do prazo antigo e que novo pedido, vazio e erro não prolongam a legenda anterior.
+- Formatação, Clippy, build release e contrato D-Bus passaram. A janela GTK foi renderizada e inspecionada no Xvfb, incluindo os avisos de envio da imagem e duração da legenda. Instalador verificado em prefixo com espaço e instalado na sessão real, removendo somente os arquivos de Tesseract anteriormente incluídos pela aplicação.
+- O serviço instalado foi reiniciado e conferido: modo manual, provedor `google_cloud_vision`, duração 15 segundos e nenhuma requisição antes de acionar. Ctrl+A e a credencial do chaveiro foram preservados. A extensão não mudou; os sinais existentes removem a legenda sem exigir novo login.
+- A qualidade desta versão nos diálogos reais do emulador, a observação visual dos 15 segundos sobre o jogo e a sessão de desempenho de 15 minutos continuam pendentes. Os testes acima não garantem acurácia universal nem as metas de CPU, RAM ou FPS.
