@@ -5,6 +5,7 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Secret from 'gi://Secret';
+import {shortcutLabel, showShortcutDialog} from './shortcut.js';
 
 const BUS = 'io.github.areatranslator.Service';
 const PATH = '/io/github/areatranslator/Service';
@@ -98,7 +99,15 @@ function settings() {
         await selectArea();
     }, true));
     box.append(actions);
-    box.append(button('Atualizar tradução (Super + Shift + R)', async () => {
+    const shortcutRow = new Gtk.Box({spacing: 8});
+    const shortcut = new Gtk.Label({label: `Atalho: ${shortcutLabel()}`, xalign: 0, hexpand: true});
+    shortcutRow.append(shortcut);
+    shortcutRow.append(button('Alterar atalho…', () => showShortcutDialog(window, () => {
+        shortcut.label = `Atalho: ${shortcutLabel()}`;
+        message.label = 'Atalho salvo. A alteração já está ativa no Ubuntu.';
+    })));
+    box.append(shortcutRow);
+    box.append(button('Atualizar tradução', async () => {
         await service('Refresh');
         message.label = 'Relendo a área selecionada. Você pode voltar ao jogo.';
     }));

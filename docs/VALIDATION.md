@@ -131,3 +131,11 @@ O coletor lê somente `/proc`; ele não grava telas. Para tempos de OCR/API, exe
 - O teste de registro/atualização/remoção do atalho usou GSettings em memória e confirmou a preservação de outros atalhos e da combinação personalizada. Instalador validado com prefixo contendo espaço; launcher, dependências e arquivo desktop passaram nas verificações.
 - Formatação, Clippy e compilação release passaram. Serviço, interface, extensão e cliente foram instalados localmente; o registro real do atalho e os arquivos instalados foram conferidos. A nova opção do menu será carregada pelo GNOME no próximo login.
 - Não houve teste de pressão física do atalho durante captura real do emulador nem medição adicional de desempenho. Estes testes não demonstram correção de toda leitura instável do OCR.
+
+
+## Configuração do atalho na interface — 2026-09-23
+
+- A tela principal mostra a combinação salva e permite gravar outra, restaurar o padrão ou desativar o atalho. Cancelar descarta a alteração. O registro global continua usando a mesma entrada do Ubuntu.
+- Os testes GTK passaram no Xvfb e no GNOME 46/Wayland isolado: validação de combinações, conflito com outro atalho personalizado e com Alt+F4, gravação por evento de teclado, salvamento, cancelamento, desativação e restauração. O teste do instalador também confirmou que atualizar não reativa uma combinação desativada.
+- A tela principal e o gravador foram renderizados e inspecionados. O instalador foi executado em prefixo isolado com espaço, incluindo o novo módulo. A interface foi atualizada na instalação local, sem alterar a combinação existente nem reiniciar a captura.
+- Não houve teste de pressão física de teclas durante o jogo; os eventos do gravador foram simulados. Esta mudança configura o atalho de refresh existente; não altera o motor para funcionar exclusivamente sob demanda.

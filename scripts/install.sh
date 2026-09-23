@@ -17,6 +17,7 @@ mkdir -p "$install_root/bin" "$install_root/ui" "$install_root/lib" "$install_ro
 install -m755 target/release/area-translator "$install_root/bin/area-translator"
 install -m644 ui/app.js "$install_root/ui/app.js"
 install -m644 ui/refresh.js "$install_root/ui/refresh.js"
+install -m644 ui/shortcut.js "$install_root/ui/shortcut.js"
 install -m644 extension/*.js extension/*.json extension/*.css "$extension_root/"
 install -m644 extension/schemas/*.xml "$extension_root/schemas/"
 glib-compile-schemas --strict "$extension_root/schemas"

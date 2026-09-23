@@ -33,6 +33,9 @@ if (ARGV[0] === 'install' && ARGV[1]) {
     install("'/tmp/new refresh'");
     if (root.get_strv('custom-keybindings').length !== 2) throw new Error('Duplicate shortcut');
     if (settings(path).get_string('binding') !== '<Super><Alt>r') throw new Error('User binding overwritten');
+    settings(path).set_string('binding', '');
+    install("'/tmp/new refresh'");
+    if (settings(path).get_string('binding') !== '') throw new Error('Disabled binding reenabled');
     remove();
     if (JSON.stringify(root.get_strv('custom-keybindings')) !== JSON.stringify([other])) throw new Error('Other shortcuts modified');
     print('Shortcut install/update/remove preserves user settings.');

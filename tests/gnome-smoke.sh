@@ -96,6 +96,9 @@ from pathlib import Path
 import ast, json
 assert not json.loads(ast.literal_eval(Path('.deps/overlay-paused.txt').read_text())[0])['visible']
 PY
+gjs -m tests/shortcut.js >.deps/shortcut-wayland.log 2>&1
+cat .deps/shortcut-wayland.log
+if rg 'JS ERROR|CRITICAL' .deps/shortcut-wayland.log; then exit 1; fi
 gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell \
     --method org.gnome.Shell.Extensions.GetExtensionInfo area-translator@local
 gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell \

@@ -101,7 +101,7 @@ Na primeira instalação, o GNOME pode precisar que você **saia da sessão e en
 
 **Super + Shift + R** atualiza a tradução: limpa a legenda atual e força uma nova leitura da mesma região, sem reabrir o compartilhamento. A leitura ainda precisa ser confirmada três vezes; traduções conhecidas são reutilizadas do cache. Funciona somente com a tradução ativa e não retoma uma captura pausada ou bloqueada. Também há o botão **Atualizar tradução** na configuração e no menu da extensão.
 
-O instalador registra o refresh nos atalhos personalizados do Ubuntu; ele funciona na sessão atual. Em uma atualização, o novo item do menu aparece quando o GNOME carregar novamente a extensão, normalmente no próximo login. Para mudar a combinação, use Configurações → Teclado → Atalhos personalizados → **PixelLingo — Atualizar tradução**. Pelo terminal: `~/.local/bin/area-translator-refresh`.
+O instalador registra o refresh nos atalhos personalizados do Ubuntu; ele funciona na sessão atual. Em uma atualização, o novo item do menu aparece quando o GNOME carregar novamente a extensão, normalmente no próximo login. Para mudar a combinação, abra o tradutor e clique em **Alterar atalho…**, pressione as teclas desejadas e clique em **Salvar**. Você também pode restaurar o padrão ou desativar o atalho; a escolha é preservada nas atualizações. A interface verifica conflitos com atalhos personalizados e atalhos comuns do GNOME. Alternativamente, use Configurações do Ubuntu → Teclado → Atalhos personalizados → **PixelLingo — Atualizar tradução**. Pelo terminal: `~/.local/bin/area-translator-refresh`.
 
 **Super + Shift + T** pausa/retoma. O menu também permite selecionar outra área, encerrar a captura, habilitar fundo translúcido e reposicionar a legenda. Durante o reposicionamento, a captura pausa: arraste a legenda e solte. O modo termina automaticamente após 15 segundos. Fora desse modo, a legenda deixa os cliques passarem e não recebe foco.
 
@@ -175,6 +175,7 @@ Testes de integração adicionais, sem tocar na sessão gráfica atual:
 ./scripts/test-gnome.sh
 xvfb-run -a -s '-screen 0 1200x800x24' bash tests/ui-smoke.sh
 xvfb-run -a -s '-screen 0 1200x800x24' bash tests/ui-smoke.sh window
+GSETTINGS_BACKEND=memory GDK_BACKEND=x11 GTK_A11Y=none xvfb-run -a gjs -m tests/shortcut.js
 ```
 
 O teste GNOME cria um compositor isolado, carrega uma cópia instrumentada da extensão em `.deps/`, usa tradução simulada e uma aplicação de teste em tela cheia. A instrumentação não é instalada. Os testes gráficos requerem GNOME 46, Xvfb, Node e Pillow.
