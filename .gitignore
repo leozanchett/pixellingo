@@ -1,0 +1,34 @@
+/target/
+/.deps/
+/dist/
+*.log
+__pycache__/
+*.py[cod]
+gschemas.compiled
+
+# Local cloud configuration and raw runtime evidence are never published.
+/docs/GCP.md
+/docs/evidence/*.csv
+/docs/evidence/*.json
+/docs/evidence/*.txt
+
+# Credentials must live in the desktop keyring, not this repository.
+.env
+.env.*
+credentials.json
+credentials-*.json
+service-account*.json
+application_default_credentials.json
+secrets/
+.secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editor and desktop artifacts.
+.DS_Store
+*~
+*.swp
+.idea/
+.vscode/

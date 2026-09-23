@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.area-translator" path="/org/gnome/shell/extensions/area-translator/">
+    <key name="toggle-shortcut" type="as"><default>['&lt;Super&gt;&lt;Shift&gt;t']</default><summary>Pausar ou retomar tradução</summary></key>
+    <key name="background" type="b"><default>false</default><summary>Fundo translúcido da legenda</summary></key>
+  </schema>
+</schemalist>

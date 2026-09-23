@@ -1,0 +1,8 @@
+{
+  "uuid": "area-translator@local",
+  "name": "Tradutor de área",
+  "description": "Legendas transparentes a partir do OCR de uma área da tela. Requer o serviço Area Translator.",
+  "shell-version": ["46"],
+  "settings-schema": "org.gnome.shell.extensions.area-translator",
+  "version": 1
+}

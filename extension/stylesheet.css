@@ -1,0 +1,12 @@
+.area-translator-subtitle {
+    color: white;
+    font-size: 22px;
+    font-weight: bold;
+    text-align: center;
+    padding: 8px 16px;
+    text-shadow: 0px 0px 3px black;
+    background-color: transparent;
+    border-radius: 10px;
+}
+.area-translator-subtitle.with-background { background-color: rgba(0, 0, 0, 0.72); }
+.area-translator-subtitle.repositioning { background-color: rgba(20, 50, 80, 0.9); border: 2px solid #68b5ff; }

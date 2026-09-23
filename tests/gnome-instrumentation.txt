@@ -1,0 +1,51 @@
+
+// TEST ONLY: appended to the copy in .deps, never installed with the extension.
+const realEnable = AreaTranslator.prototype.enable;
+const realDisable = AreaTranslator.prototype.disable;
+AreaTranslator.prototype.enable = function () {
+    realEnable.call(this);
+    const owner = this;
+    this._testExport = Gio.DBusExportedObject.wrapJSObject(`<node><interface name="io.github.areatranslator.Test">
+        <method name="Inspect"><arg type="s" direction="out"/></method>
+        <method name="Screenshot"><arg type="s" direction="in"/></method>
+        <method name="HideOverview"/>
+        <method name="ClickSubtitle"/>
+        </interface></node>`, {
+        Inspect: () => JSON.stringify({visible: owner._label.visible, reactive: owner._label.reactive,
+            canFocus: owner._label.can_focus, text: owner._label.text, x: owner._label.x, y: owner._label.y,
+            width: owner._label.width, height: owner._label.height,
+            focusedTitle: global.display.focus_window?.get_title(), fullscreen: global.display.focus_window?.is_fullscreen(),
+            pointer: global.get_pointer(), picked: String(global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, owner._label.x + 60, owner._label.y + 30))}),
+        HideOverview: () => Main.overview.hide(),
+        ClickSubtitle: () => {
+            const pointer = Clutter.get_default_backend().get_default_seat().create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
+            // Allow wl_seat capabilities to reach the GTK client before input.
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+            pointer.notify_absolute_motion(GLib.get_monotonic_time(), owner._label.x + 60, owner._label.y + 30);
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+                pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+                    pointer.notify_button(GLib.get_monotonic_time(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+                    return GLib.SOURCE_REMOVE;
+                });
+                return GLib.SOURCE_REMOVE;
+            });
+            return GLib.SOURCE_REMOVE;
+            });
+            owner._testPointer = pointer;
+        },
+        ScreenshotAsync: async ([path], invocation) => {
+            try {
+                const stream = Gio.File.new_for_path(path).replace(null, false, Gio.FileCreateFlags.NONE, null);
+                await new Shell.Screenshot().screenshot(false, stream);
+                stream.close(null);
+                invocation.return_value(null);
+            } catch (e) { invocation.return_dbus_error('io.github.areatranslator.Test.Error', e.message); }
+        },
+    });
+    this._testExport.export(Gio.DBus.session, '/io/github/areatranslator/Test');
+};
+AreaTranslator.prototype.disable = function () {
+    this._testExport.unexport();
+    realDisable.call(this);
+};
