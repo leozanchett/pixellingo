@@ -8,11 +8,11 @@ Rust mantém o processamento e a rede fora do Shell. GTK4/GJS é usado somente p
 
 ## Captura e coordenadas
 
-O portal permite apenas `Monitor`, um stream e cursor oculto. A seleção permanece uma sessão explícita e não é restaurada silenciosamente. O descritor do remote PipeWire fica vivo junto do pipeline. O portal `Closed`, EOS, erros GStreamer e alterações de resolução encerram a sessão.
+O portal recebe exatamente o tipo escolhido: `Monitor` ou `Window`, um stream e cursor oculto. O serviço verifica `AvailableSourceTypes` e não substitui silenciosamente uma janela por monitor. A seleção permanece uma sessão explícita e não é restaurada silenciosamente. O descritor do remote PipeWire fica vivo junto do pipeline. O portal `Closed`, EOS, erros GStreamer e alterações de resolução encerram a sessão.
 
 O appsink aceita BGRx/RGBx/BGRA/RGBA em memória de CPU. Não existe `videoconvert` do monitor inteiro. Quadros são descartados antes de mapear pixels se chegaram dentro da janela de 200 ms. O stride informado pelo GStreamer é respeitado; o recorte é copiado em cinza. O limite de 4 megapixels por área limita memória e trabalho acidental.
 
-Durante a seleção existe somente uma prévia RGB congelada. `GetPreview` a codifica em PNG em memória. Ao confirmar, a prévia é descartada. Posição e tamanho da região são pixels da captura; monitor é um retângulo de coordenadas lógicas do GNOME. A extensão projeta a região usando a razão entre dimensões da captura e do monitor. O usuário confirma o monitor quando a identificação do portal é insuficiente. A faixa da legenda precisa estar completamente fora da região, com margem de segurança.
+Durante a seleção existe somente uma prévia RGB congelada. `GetPreview` a codifica em PNG em memória. Ao confirmar, a prévia é descartada. Posição e tamanho da região são pixels da captura; monitor é um retângulo de coordenadas lógicas do GNOME. No modo monitor, a extensão projeta a região usando a razão entre dimensões da captura e do monitor. O usuário confirma o monitor quando a identificação do portal é insuficiente; a legenda fica completamente fora do recorte. No modo janela, a região é relativa ao stream da janela e não é projetada no monitor: o portal não informa a posição dessa janela na tela. O monitor escolhido define somente a saída da legenda, inicialmente no rodapé e reposicionável. O chrome do Shell não integra o stream da janela, portanto não é necessário reservar uma faixa fora do recorte. Mudanças nas dimensões do stream invalidam a seleção em ambos os modos; não há redimensionamento automático de coordenadas.
 
 ## Serviço D-Bus
 
@@ -23,7 +23,8 @@ Durante a seleção existe somente uma prévia RGB congelada. `GetPreview` a cod
 | Método | Entrada | Saída / efeito |
 | --- | --- | --- |
 | `SetApiKey` | `s` | Guarda a chave apenas na memória do serviço. A UI usa Secret Service para persistência. |
-| `BeginSelection` | — | Cancela a sessão anterior e abre o portal de modo assíncrono. Requer chave configurada. |
+| `BeginSelection` | — | Cancela a sessão anterior e abre o portal para monitor, preservando o contrato anterior. Requer chave configurada. |
+| `BeginWindowSelection` | — | Cancela a sessão anterior e abre o portal para uma janela. Requer chave configurada. |
 | `GetStatus` | — | `s`: snapshot JSON sem credencial. |
 | `GetPreview` | — | `ay`: PNG da prévia em memória, somente durante a seleção. |
 | `SetRegion` | `ss` | JSON de `Rect` e `Monitor`; valida e inicia o processamento. |
@@ -39,13 +40,15 @@ Sinais:
 - `StatusChanged(s)`: snapshot JSON com estado, mensagem, geometria, geração, revisão, tradução e métricas.
 - `TranslationChanged(tts)`: geração da sessão, revisão do texto, tradução (vazia para limpar).
 
+O snapshot inclui `source_type`: `monitor`, `window` ou nulo sem captura. Na parada, também são limpos posição e tamanho retornados pelo portal.
+
 Estados: `idle`, `opening`, `selecting`, `running`, `paused`, `retrying`, `blocked`, `error`.
 
 Snapshot inclui `ocr_count`, `api_count`, `cache_hits`, `characters_sent`, `ocr_ms`, `api_ms`, `latency_ms`. Contagens acumulam durante a vida do processo. Os tempos são da última operação, não percentis; o log estruturado permite coletar a distribuição. `api_count` inclui tentativas que falharam. `latency_ms` mede desde o quadro que originou o texto, incluindo estabilidade e espera de rede.
 
 O diagnóstico sob demanda consulta `GetStatus` uma vez por segundo, somente enquanto a página estiver aberta. `captured_frames` conta recortes recebidos desde a seleção/retomada; `last_frame_age_ms` mede a idade do último quadro recebido (nulo antes do primeiro). `ocr_text` e `ocr_confidence` mostram a última leitura aceita e a confiança; texto de baixa confiança fica vazio. Esses campos são limpos na pausa, parada ou troca de área. `api_pending` indica uma chamada em andamento e `api_successes` conta respostas válidas durante a vida do serviço. Texto reconhecido e traduzido permanecem em memória e não são incluídos nos logs. A página de diagnóstico deve ficar fora da região selecionada.
 
-A extensão exporta `io.github.areatranslator.Overlay.GetMonitors() → s` no nome `org.gnome.Shell`, objeto `/io/github/areatranslator/Overlay`, com os monitores atuais em JSON.
+A extensão exporta `io.github.areatranslator.Overlay.GetMonitors() → s` no nome `org.gnome.Shell`, objeto `/io/github/areatranslator/Overlay`, com os monitores atuais em JSON. `GetVersion() → u` retorna `2`; a interface consulta essa versão antes de iniciar uma captura de janela para evitar usar a geometria de uma extensão antiga ainda carregada no Shell.
 
 ## Concorrência e limites
 

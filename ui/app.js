@@ -34,6 +34,7 @@ const store = password => new Promise((resolve, reject) => Secret.password_store
 const app = new Gtk.Application({application_id: 'io.github.areatranslator.App'});
 const smokeTest = ARGV.includes('--smoke-test');
 const smokeSelection = ARGV.includes('--smoke-selection');
+const smokeWindowSelection = ARGV.includes('--smoke-window-selection');
 const smokeDiagnostics = ARGV.includes('--smoke-diagnostics');
 let window;
 let selecting = false;
@@ -42,6 +43,7 @@ let credentialsReady = false;
 let message;
 let diagnosticTimer = 0;
 let pageRevision = 0;
+let captureSource = 'window';
 
 function showError(error) {
     message.label = String(error.message ?? error).replace(/^GDBus\.Error:[^:]+:\s*/, '');
@@ -77,6 +79,11 @@ function settings() {
         ? 'Chave salva no chaveiro — preencha apenas para trocar' : 'Chave da Cloud Translation API', show_peek_icon: true});
     box.append(entry);
     box.append(new Gtk.Label({label: 'As imagens ficam neste computador. Somente o texto é enviado ao Google Cloud. O serviço pode cobrar pelo uso.', wrap: true, xalign: 0}));
+    box.append(new Gtk.Label({label: 'O que capturar?', xalign: 0}));
+    const sourcePicker = Gtk.DropDown.new_from_strings(['Janela do aplicativo', 'Monitor inteiro']);
+    sourcePicker.selected = captureSource === 'window' ? 0 : 1;
+    sourcePicker.connect('notify::selected', () => { captureSource = sourcePicker.selected === 0 ? 'window' : 'monitor'; });
+    box.append(sourcePicker);
     const actions = new Gtk.Box({spacing: 8});
     actions.append(button('Salvar chave', async () => {
         const key = entry.text.trim();
@@ -127,7 +134,7 @@ function diagnostics() {
             if (revision !== pageRevision) return;
             const s = JSON.parse(json);
             capture.label = !s.region ? 'Sem área ativa. Volte e selecione a caixa de diálogo.'
-                : `${s.region.width} × ${s.region.height} px; ${s.captured_frames ?? '—'} quadros recebidos nesta sessão; último quadro há ${s.last_frame_age_ms ?? '—'} ms.`;
+                : `${s.source_type === 'window' ? 'Janela' : 'Monitor'}: ${s.region.width} × ${s.region.height} px; ${s.captured_frames ?? '—'} quadros recebidos nesta sessão; último quadro há ${s.last_frame_age_ms ?? '—'} ms.`;
             ocr.label = `${s.ocr_count ?? 0} leituras; confiança da última: ${s.ocr_confidence ?? '—'}/100; tempo: ${s.ocr_ms ?? 0} ms.`;
             source.label = s.ocr_text || (s.ocr_confidence == null ? 'Nenhuma leitura nesta sessão.'
                 : 'Nenhum texto aceito. Confira o recorte e a legibilidade; confiança inferior a 40 é descartada.');
@@ -145,6 +152,7 @@ function diagnostics() {
 }
 
 async function selectArea() {
+    const windowCapture = captureSource === 'window';
     let monitors;
     try {
         const [json] = await call('org.gnome.Shell', OVERLAY, 'io.github.areatranslator.Overlay', 'GetMonitors');
@@ -153,11 +161,19 @@ async function selectArea() {
         throw new Error('Ative a extensão “Tradutor de área” no GNOME. Após a primeira instalação, pode ser necessário sair da sessão e entrar novamente.');
     }
     if (!monitors.length) throw new Error('Nenhum monitor disponível.');
+    if (windowCapture) {
+        try {
+            const [version] = await call('org.gnome.Shell', OVERLAY, 'io.github.areatranslator.Overlay', 'GetVersion');
+            if (version < 2) throw new Error('Extensão antiga');
+        } catch (_) {
+            throw new Error('A captura por janela precisa da extensão atualizada. Salve seu trabalho, saia da sessão do Ubuntu e entre novamente.');
+        }
+    }
     selecting = true;
     selectionCancelled = false;
     window.hide();
     try {
-        await service('BeginSelection');
+        await service(windowCapture ? 'BeginWindowSelection' : 'BeginSelection');
         let bytes = null;
         let status;
         for (let attempt = 0; attempt < 600 && !selectionCancelled; attempt++) {
@@ -188,13 +204,17 @@ function renderSelection(bytes, status, monitors) {
     const pixbuf = loader.get_pixbuf();
     const width = pixbuf.width;
     const height = pixbuf.height;
-    const box = page('Selecione a região de texto', 'Arraste sobre a prévia. Deixe espaço acima ou abaixo para a legenda. A área fica fixa na tela.');
+    const windowCapture = status.source_type === 'window';
+    const box = page('Selecione a região de texto', windowCapture
+        ? 'Marque a caixa de diálogo dentro da janela. O recorte acompanha a janela ao movê-la. Se redimensionar ou entrar em tela cheia, selecione novamente. A legenda fica no monitor escolhido abaixo.'
+        : 'Arraste sobre a prévia. Deixe espaço acima ou abaixo para a legenda. A área fica fixa na tela.');
     const monitorNames = monitors.map((m, i) => `${i + 1}. ${m.name} — ${m.width} × ${m.height}`);
     const dropdown = Gtk.DropDown.new_from_strings(monitorNames);
     const match = monitors.findIndex(m => status.portal_position && m.x === status.portal_position[0]
         && m.y === status.portal_position[1]);
-    dropdown.selected = match >= 0 ? match : monitors.length === 1 ? 0 : Gtk.INVALID_LIST_POSITION;
-    box.append(new Gtk.Label({label: 'Monitor compartilhado (selecione o mesmo escolhido no diálogo do sistema):', xalign: 0, wrap: true}));
+    dropdown.selected = windowCapture ? 0 : match >= 0 ? match : monitors.length === 1 ? 0 : Gtk.INVALID_LIST_POSITION;
+    box.append(new Gtk.Label({label: windowCapture ? 'Onde exibir a legenda:'
+        : 'Monitor compartilhado (selecione o mesmo escolhido no diálogo do sistema):', xalign: 0, wrap: true}));
     box.append(dropdown);
     const drawing = new Gtk.DrawingArea({hexpand: true, vexpand: true, content_width: 800, content_height: 420});
     let region = null;
@@ -237,9 +257,9 @@ function renderSelection(bytes, status, monitors) {
     actions.append(button('Iniciar tradução', async () => {
         if (!region || region.width < 16 || region.height < 16) throw new Error('Arraste para marcar uma área de texto.');
         const monitor = monitors[dropdown.selected];
-        if (!monitor) throw new Error('Selecione o monitor que está sendo compartilhado.');
+        if (!monitor) throw new Error('Selecione o monitor para a legenda.');
         // Compare aspect ratios: logical and pixel coordinates can have different scales.
-        if (Math.abs((width / height) / (monitor.width / monitor.height) - 1) > 0.03)
+        if (!windowCapture && Math.abs((width / height) / (monitor.width / monitor.height) - 1) > 0.03)
             throw new Error('O monitor escolhido não corresponde ao formato da captura.');
         await service('SetRegion', '(ss)', [JSON.stringify(region), JSON.stringify(monitor)]);
         selecting = false;
@@ -262,10 +282,10 @@ app.connect('activate', () => {
     });
     settings();
     window.present();
-    if (smokeTest || smokeSelection || smokeDiagnostics) {
-        if (smokeSelection) {
+    if (smokeTest || smokeSelection || smokeWindowSelection || smokeDiagnostics) {
+        if (smokeSelection || smokeWindowSelection) {
             const [, bytes] = Gio.File.new_for_path(GLib.getenv('AREA_TRANSLATOR_TEST_IMAGE')).load_contents(null);
-            renderSelection(bytes, {portal_position: [0, 0]}, [{x: 0, y: 0, width: 1280, height: 720, name: 'Monitor de teste'}]);
+            renderSelection(bytes, {portal_position: [0, 0], source_type: smokeWindowSelection ? 'window' : 'monitor'}, [{x: 0, y: 0, width: 1280, height: 720, name: 'Monitor de teste'}]);
         }
         if (smokeDiagnostics) diagnostics();
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
@@ -284,4 +304,4 @@ app.connect('shutdown', () => {
     pageRevision++;
     if (diagnosticTimer) { GLib.source_remove(diagnosticTimer); diagnosticTimer = 0; }
 });
-app.run(ARGV.filter(arg => !['--smoke-test', '--smoke-selection', '--smoke-diagnostics'].includes(arg)));
+app.run(ARGV.filter(arg => !['--smoke-test', '--smoke-selection', '--smoke-window-selection', '--smoke-diagnostics'].includes(arg)));

@@ -23,6 +23,7 @@ pub struct Snapshot {
     pub frame_size: Option<(u32, u32)>,
     pub portal_position: Option<(i32, i32)>,
     pub portal_size: Option<(i32, i32)>,
+    pub source_type: Option<crate::model::CaptureSource>,
     pub ocr_count: u64,
     pub api_count: u64,
     pub cache_hits: u64,
@@ -51,6 +52,7 @@ impl Default for Snapshot {
             frame_size: None,
             portal_position: None,
             portal_size: None,
+            source_type: None,
             ocr_count: 0,
             api_count: 0,
             cache_hits: 0,
@@ -98,7 +100,12 @@ impl Service {
 #[zbus::interface(name = "io.github.areatranslator.Service")]
 impl Service {
     async fn begin_selection(&self) -> zbus::fdo::Result<()> {
-        self.request(Command::Begin).await
+        self.request(|reply| Command::Begin(crate::model::CaptureSource::Monitor, reply))
+            .await
+    }
+    async fn begin_window_selection(&self) -> zbus::fdo::Result<()> {
+        self.request(|reply| Command::Begin(crate::model::CaptureSource::Window, reply))
+            .await
     }
     async fn set_region(&self, region_json: &str, monitor_json: &str) -> zbus::fdo::Result<()> {
         let region = serde_json::from_str(region_json)

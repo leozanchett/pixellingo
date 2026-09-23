@@ -1,4 +1,4 @@
-use crate::model::{Frame, Rect, SCAN_INTERVAL};
+use crate::model::{CaptureSource, Frame, Rect, SCAN_INTERVAL};
 use anyhow::{Context, Result};
 use ashpd::desktop::{
     Session,
@@ -36,18 +36,30 @@ pub struct Capture {
     pub slot: FrameSlot,
     pub position: Option<(i32, i32)>,
     pub logical_size: Option<(i32, i32)>,
+    pub source: CaptureSource,
 }
 
 impl Capture {
-    pub async fn start(mut cancel: tokio::sync::oneshot::Receiver<()>) -> Result<Self> {
+    pub async fn start(
+        source_kind: CaptureSource,
+        mut cancel: tokio::sync::oneshot::Receiver<()>,
+    ) -> Result<Self> {
         let portal = Screencast::new().await?;
+        let source_type = match source_kind {
+            CaptureSource::Monitor => SourceType::Monitor,
+            CaptureSource::Window => SourceType::Window,
+        };
+        anyhow::ensure!(
+            portal.available_source_types().await?.contains(source_type),
+            "O sistema não oferece este tipo de captura."
+        );
         let session = portal.create_session(Default::default()).await?;
         let open = async {
             portal
                 .select_sources(
                     &session,
                     SelectSourcesOptions::default()
-                        .set_sources(Some(SourceType::Monitor.into()))
+                        .set_sources(Some(source_type.into()))
                         .set_multiple(false)
                         .set_cursor_mode(CursorMode::Hidden)
                         .set_persist_mode(ashpd::desktop::PersistMode::DoNot),
@@ -60,7 +72,13 @@ impl Capture {
             let stream = response
                 .streams()
                 .first()
-                .context("Nenhum monitor selecionado.")?;
+                .context("Nenhuma fonte de captura selecionada.")?;
+            anyhow::ensure!(
+                stream
+                    .source_type()
+                    .is_none_or(|actual| actual == source_type),
+                "O portal retornou um tipo de captura diferente do solicitado."
+            );
             let fd = portal
                 .open_pipe_wire_remote(&session, Default::default())
                 .await?;
@@ -136,6 +154,7 @@ impl Capture {
                     slot,
                     position,
                     logical_size,
+                    source: source_kind,
                 })
             }
             Err(error) => {
@@ -201,7 +220,7 @@ fn consume_sample(sample: &gst::Sample, state: &mut SharedFrames) -> Result<()> 
         "Resolução de captura não suportada."
     );
     if state.dimensions.is_some_and(|old| old != dimensions) {
-        anyhow::bail!("A resolução mudou. Selecione a área novamente.");
+        anyhow::bail!("O tamanho da captura mudou. Selecione a área novamente.");
     }
     state.dimensions = Some(dimensions);
     // During selection retain a single frozen preview, not a stream of full images.
@@ -336,7 +355,7 @@ mod tests {
             consume_sample(&sample, &mut state)
                 .unwrap_err()
                 .to_string()
-                .contains("resolução mudou")
+                .contains("tamanho da captura mudou")
         );
     }
 }

@@ -27,3 +27,17 @@ export function placeSubtitle(region, monitor, width, height, preferred = null) 
     return candidates.find(candidate => candidate.width <= safe.width && candidate.height <= safe.height
         && !overlaps(candidate, protectedRegion)) ?? null;
 }
+
+export function placeWindowSubtitle(monitor, width, naturalHeight, preferred = null) {
+    // A window stream does not contain this Shell actor. Place independently of
+    // its crop: the portal provides no on-screen position for window streams.
+    const height = Math.min(Math.ceil(naturalHeight), monitor.height - 48);
+    width = Math.min(width, monitor.width - 32);
+    if (height <= 0 || width <= 0) return null;
+    const left = monitor.x + 16;
+    const top = monitor.y + 24;
+    const right = monitor.x + monitor.width - width - 16;
+    const bottom = monitor.y + monitor.height - height - 24;
+    return {x: Math.max(left, Math.min(right, preferred?.x ?? monitor.x + (monitor.width - width) / 2)),
+        y: Math.max(top, Math.min(bottom, preferred?.y ?? bottom)), width, height};
+}

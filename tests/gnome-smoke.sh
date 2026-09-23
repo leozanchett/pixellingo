@@ -26,6 +26,8 @@ for attempt in $(seq 1 15); do
 done
 cat .deps/gnome-monitors.txt
 test -s .deps/gnome-monitors.txt
+version=$(gdbus call --session --dest org.gnome.Shell --object-path /io/github/areatranslator/Overlay --method io.github.areatranslator.Overlay.GetVersion)
+test "$version" = '(uint32 2,)'
 gjs -m tests/mock-service.js &
 mock_pid=$!
 gdbus call --session --dest org.gnome.Shell --object-path /io/github/areatranslator/Test \
@@ -71,6 +73,15 @@ subtitle('ShortSubtitle')
 short = inspect()
 assert short['visible'] and short['height'] < long['height'], short
 print('Subtitle grows for long translations and shrinks for short ones without overlapping capture.')
+subtitle('WindowSource')
+window = inspect()
+assert window['visible'] and window['y'] + window['height'] == 696, window
+assert not window['reactive'] and not window['canFocus'], window
+subtitle('LongSubtitle')
+window_long = inspect()
+assert window_long['visible'] and window_long['height'] > window['height'], window_long
+assert window_long['y'] + window_long['height'] == 696, window_long
+print('Window capture keeps the subtitle at the monitor bottom, independent of the window crop.')
 PY
 gdbus call --session --dest io.github.areatranslator.Service --object-path /io/github/areatranslator/Service \
     --method io.github.areatranslator.Service.Pause

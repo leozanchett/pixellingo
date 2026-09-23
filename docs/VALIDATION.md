@@ -81,3 +81,12 @@ O coletor lê somente `/proc`; ele não grava telas. Para tempos de OCR/API, exe
 - Sete imagens sintéticas passaram pelo OCR nativo, incluindo diálogo sobre cenário; o caso de cenário obteve confiança 95 e texto exato. O teste também alterna novamente para o recorte pequeno no mesmo trabalhador.
 - Cinco testes de geometria passaram. No compositor GNOME isolado, a legenda cresceu com uma tradução longa e encolheu com uma curta, mantendo-se fora da área de captura. Passagem de cliques e foco continuaram funcionando.
 - A evidência enviada durante a depuração foi analisada localmente; não integra o repositório. As metas de consumo durante 15 minutos continuam pendentes.
+
+## Captura por janela — 23/09/2026
+
+- 11 testes Rust e 6 de geometria passaram, incluindo recorte de janela independente da proporção/posição do monitor de saída e pedido de nova seleção após mudança de dimensões.
+- O teste com portal simulado executou o serviço Rust real: confirmou `types=2` para janela, `types=1` para monitor, cursor oculto, uma fonte, limpeza após cancelamento e erro sem abrir sessão quando o sistema não oferece captura de janelas. Nenhuma chamada à API foi feita.
+- No GNOME 46 isolado, uma legenda com origem de janela permaneceu no rodapé do monitor e cresceu para cima com texto longo, mesmo com recorte de 640 × 480 e monitor de 1280 × 720. A extensão também passou pelo fluxo anterior de monitor, preservação de foco e passagem de cliques.
+- Ambas as prévias GTK foram renderizadas e inspecionadas. A seleção por janela identifica o monitor como destino da legenda e não exige a mesma proporção entre janela e monitor.
+- A instalação local é atualizada; carregar o novo código da extensão requer renovar a sessão do GNOME. A UI detecta a versão antiga e informa essa necessidade antes de iniciar captura por janela.
+- A autorização pelo portal real, o deslocamento/minimização da janela do emulador e a captura de tela cheia precisam ser conferidos em sessão de uso. Os testes de portal simulado e de geometria não comprovam esses comportamentos do compositor real.

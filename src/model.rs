@@ -5,6 +5,40 @@ pub const SCAN_INTERVAL: Duration = Duration::from_millis(200);
 pub const OCR_INTERVAL: Duration = Duration::from_millis(500);
 pub const STABLE_INTERVAL: Duration = Duration::from_millis(500);
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureSource {
+    Monitor,
+    Window,
+}
+
+impl CaptureSource {
+    pub fn validate_layout(
+        self,
+        region: Rect,
+        dimensions: (u32, u32),
+        monitor: Monitor,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            (100..=16384).contains(&monitor.width) && (100..=16384).contains(&monitor.height),
+            "Monitor inválido."
+        );
+        region.validate(dimensions.0, dimensions.1)?;
+        if self == Self::Monitor {
+            let top = region.y as f64 / dimensions.1 as f64 * monitor.height as f64;
+            let bottom =
+                (region.y + region.height) as f64 / dimensions.1 as f64 * monitor.height as f64;
+            anyhow::ensure!(
+                top >= 110.0 || monitor.height as f64 - bottom >= 110.0,
+                "Deixe pelo menos 110 pixels livres acima ou abaixo da área para a legenda."
+            );
+        }
+        // A window stream excludes Shell chrome. Its crop coordinates cannot be
+        // projected onto the output monitor, and require no subtitle exclusion.
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Rect {
     pub x: u32,
@@ -120,6 +154,49 @@ impl TextGate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_crop_is_independent_of_overlay_monitor_geometry() {
+        let region = Rect {
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+        };
+        let monitor = Monitor {
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        assert!(
+            CaptureSource::Window
+                .validate_layout(region, (640, 480), monitor)
+                .is_ok()
+        );
+        assert!(
+            CaptureSource::Monitor
+                .validate_layout(region, (640, 480), monitor)
+                .is_err()
+        );
+        assert!(
+            CaptureSource::Window
+                .validate_layout(region, (320, 240), monitor)
+                .is_err()
+        );
+        assert!(
+            CaptureSource::Window
+                .validate_layout(
+                    region,
+                    (640, 480),
+                    Monitor {
+                        width: 0,
+                        ..monitor
+                    }
+                )
+                .is_err()
+        );
+    }
 
     #[test]
     fn rejects_overflow_and_outside_region() {

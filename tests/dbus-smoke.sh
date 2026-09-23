@@ -10,15 +10,23 @@ base = ['gdbus', 'call', '--session', '--dest', 'io.github.areatranslator.Servic
         '--object-path', '/io/github/areatranslator/Service', '--method']
 def call(method, *args):
     return subprocess.run(base + ['io.github.areatranslator.Service.' + method, *args], capture_output=True, text=True)
+result = None
 for attempt in range(30):
+    owner = subprocess.check_output(['gdbus', 'call', '--session', '--dest', 'org.freedesktop.DBus',
+        '--object-path', '/org/freedesktop/DBus', '--method', 'org.freedesktop.DBus.NameHasOwner',
+        'io.github.areatranslator.Service'], text=True)
+    if 'true' not in owner:
+        time.sleep(.1)
+        continue
     result = call('GetStatus')
     if result.returncode == 0:
         break
     time.sleep(.1)
-assert result.returncode == 0, result.stderr
+assert result is not None and result.returncode == 0, 'Test service did not start'
 state = json.loads(ast.literal_eval(result.stdout)[0])
 assert state['state'] == 'idle', state
 assert call('BeginSelection').returncode != 0, 'Capture must require configuration'
+assert call('BeginWindowSelection').returncode != 0, 'Window capture must also require configuration'
 assert call('SetApiKey', 'bad key').returncode != 0
 assert call('SetApiKey', 'test-only-no-network').returncode == 0
 assert call('Resume').returncode != 0, 'No region selected'
@@ -32,6 +40,7 @@ assert state['api_count'] == 0 and state['ocr_count'] == 0
 assert state['captured_frames'] == 0 and state['last_frame_age_ms'] is None
 assert state['ocr_text'] == '' and state['ocr_confidence'] is None
 assert state['api_successes'] == 0 and not state['api_pending']
+assert state['source_type'] is None
 print('D-Bus lifecycle, validation, idempotent stop and credential redaction passed.')
 PY
 kill -INT "$service_pid"

@@ -1,6 +1,6 @@
 # PixelLingo — Tradução além dos pixels
 
-Seleciona uma região da tela, reconhece o texto em inglês localmente e mostra a tradução para português brasileiro em uma legenda transparente. Independente de emulador, jogo ou aplicativo.
+Seleciona uma região de uma janela ou monitor, reconhece o texto em inglês localmente e mostra a tradução para português brasileiro em uma legenda transparente. Independente de emulador, jogo ou aplicativo.
 
 **Plataforma inicial:** Ubuntu 24.04, GNOME Shell 46 e Wayland, x86-64. O serviço é Rust, a interface sob demanda é GTK4/GJS e a legenda é uma extensão do GNOME. A tradução usa Google Cloud Translation Basic/NMT.
 
@@ -27,20 +27,20 @@ Seleciona uma região da tela, reconhece o texto em inglês localmente e mostra 
 | --- | --- |
 | Desktop | Ubuntu 24.04, GNOME Shell 46, sessão Wayland, x86-64 |
 | Texto | Inglês → português brasileiro; um bloco de texto por vez |
-| Aplicações | Captura de uma área do monitor, independente do emulador |
+| Aplicações | Captura de uma janela ou monitor, com recorte interno, independente do emulador |
 | Legenda | Transparente, com contorno e fundo translúcido opcional |
 | Entrada | Preserva o foco e permite passagem de cliques durante o uso |
 | OCR | Tesseract local com modelo inglês `tessdata_fast` |
 | Tradução | Google Cloud Translation Basic/NMT; requer internet e credencial própria |
 | Controles | Menu no painel do GNOME e atalho de pausa/retomada |
 
-Outras versões do GNOME, KDE, X11, Windows e macOS não foram validadas. Não há tradução offline, acompanhamento automático de janelas nem seleção de várias regiões simultâneas.
+Outras versões do GNOME, KDE, X11, Windows e macOS não foram validadas. Não há tradução offline nem seleção de várias regiões simultâneas. No modo janela, o recorte acompanha seu deslocamento; a legenda permanece no monitor escolhido.
 
 ## Arquitetura
 
 ```mermaid
 flowchart LR
-    A[Monitor autorizado pelo portal] --> B[PipeWire / GStreamer]
+    A[Janela ou monitor autorizado pelo portal] --> B[PipeWire / GStreamer]
     B --> C[Recorte e detecção de mudanças]
     C --> D[OCR Tesseract local]
     D --> E[Estabilidade e cache em memória]
@@ -54,7 +54,7 @@ O serviço Rust executa captura, OCR e rede fora do GNOME Shell. A interface GTK
 
 ## Instalar
 
-Clone o repositório na sua máquina. Se ele estiver privado, autentique sua conta GitHub antes de clonar:
+Clone o repositório na sua máquina:
 
 ```sh
 git clone https://github.com/leozanchett/pixellingo.git
@@ -89,19 +89,23 @@ Ative a extensão:
 gnome-extensions enable area-translator@local
 ```
 
-Na primeira instalação, o GNOME pode precisar que você **saia da sessão e entre novamente** para descobrir a extensão. Isso é diferente de bloquear e desbloquear a tela. Depois, abra **Tradutor de área** no menu de aplicativos ou execute `~/.local/bin/area-translator-ui`.
+Na primeira instalação, o GNOME pode precisar que você **saia da sessão e entre novamente** para descobrir a extensão. Isso é diferente de bloquear e desbloquear a tela. Ao atualizar uma extensão já carregada, também é necessário renovar a sessão para carregar o novo código. Depois, abra **Tradutor de área** no menu de aplicativos ou execute `~/.local/bin/area-translator-ui`.
 
 ## Usar
 
 1. Configure um projeto com faturamento habilitado, ative a **Cloud Translation API** e crie uma chave restrita a essa API. Siga o [guia de configuração do Google Cloud](docs/CLOUD_SETUP.md). Se a credencial já estiver no chaveiro desta sessão, não é necessário cadastrá-la novamente.
 2. Cole a chave na janela e clique em **Salvar chave**. Ela fica no chaveiro do sistema, não em arquivo de configuração. Não coloque a chave no repositório.
-3. Clique em **Selecionar área**, escolha um monitor no diálogo do sistema e marque a caixa de texto na prévia.
-4. Se houver mais de um monitor, confirme na lista o mesmo que compartilhou. Deixe pelo menos 110 pixels lógicos livres acima ou abaixo do recorte para a legenda.
+3. Em **O que capturar?**, escolha **Janela do aplicativo** (padrão) ou **Monitor inteiro**. Clique em **Selecionar área** e autorize a janela do emulador ou o monitor no diálogo do Ubuntu.
+4. Marque a caixa de texto na prévia. No modo janela, escolha **Onde exibir a legenda**; no modo monitor, confirme o monitor compartilhado e deixe pelo menos 110 pixels lógicos livres acima ou abaixo do recorte.
 5. Clique em **Iniciar tradução**. A janela de configuração fecha; o controle fica no ícone de dicionário da barra superior.
 
 **Super + Shift + T** pausa/retoma. O menu também permite selecionar outra área, encerrar a captura, habilitar fundo translúcido e reposicionar a legenda. Durante o reposicionamento, a captura pausa: arraste a legenda e solte. O modo termina automaticamente após 15 segundos. Fora desse modo, a legenda deixa os cliques passarem e não recebe foco.
 
-Se o jogo mudar de posição, selecione novamente. Uma mudança de resolução ou de monitores encerra a captura para evitar usar coordenadas incorretas. A área não acompanha janelas e não há cadastro de jogos.
+No modo **Janela do aplicativo**, a captura contém somente a janela autorizada; mover a janela mantém o recorte relativo ao seu conteúdo. A legenda fica inicialmente no rodapé do monitor escolhido e pode ser reposicionada pelo menu. Ela não acompanha a posição da janela e não faz parte do stream capturado.
+
+No modo **Monitor inteiro**, o retângulo permanece fixo na tela: selecione novamente se mover o jogo. A legenda fica fora desse retângulo.
+
+Redimensionar a janela, mudar a resolução ou entrar/sair de tela cheia pode alterar as dimensões do stream; quando isso acontece, a captura encerra e solicita uma nova seleção. Alterar a configuração dos monitores também encerra a captura. Ao fechar a janela, o encerramento informado pelo portal é tratado pelo serviço. Uma janela minimizada pode deixar de fornecer quadros; use pausar/retomar ao alternar o uso. Não há cadastro de jogos.
 
 Bloquear a sessão oculta a legenda e pausa a tradução. Retome pelo menu ou atalho após desbloquear.
 
@@ -109,16 +113,16 @@ Bloquear a sessão oculta a legenda e pausa a tradução. Retome pelo menu ou at
 
 1. Abra seu emulador e um jogo com diálogos em inglês. Escolha a resolução e a posição final da janela; se for jogar em tela cheia, entre nesse modo antes de selecionar a área.
 2. Pare em um diálogo estático e legível. Abra **Tradutor de área** e selecione somente a caixa de texto, evitando elementos animados sempre que possível.
-3. Autorize o monitor no diálogo do Ubuntu, marque o retângulo na prévia e inicie a tradução. Volte ao emulador.
-4. Aguarde a frase estabilizar e confira a legenda em português fora da área selecionada. Avance alguns diálogos, repita um texto e teste **Super + Shift + T**.
-5. Confira se o teclado e o controle continuam no emulador e se cliques atravessam a legenda. Ao mover a janela do jogo, use **Selecionar outra área**.
+3. Escolha **Janela do aplicativo**, autorize a janela do jogo no diálogo do Ubuntu, marque o retângulo na prévia e escolha o monitor da legenda. Inicie a tradução e volte ao emulador.
+4. Aguarde a frase estabilizar e confira a legenda em português no monitor escolhido. Avance alguns diálogos, repita um texto e teste **Super + Shift + T**.
+5. Confira se o teclado e o controle continuam no emulador e se cliques atravessam a legenda. No modo janela, mova o emulador para conferir que a leitura acompanha seu conteúdo. Após redimensionar, use **Selecionar outra área**.
 6. Ao terminar, encerre a captura pelo menu do tradutor.
 
 Se a leitura estiver imprecisa, aumente o tamanho do texto ou a escala de renderização no emulador e selecione novamente. Para avaliar custo e desempenho, use uma cena reproduzível e siga o [roteiro de validação](docs/VALIDATION.md).
 
 ## Como mantém o consumo baixo
 
-- PipeWire fornece o monitor, mas somente o recorte é convertido para escala de cinza e processado. Não há conversão contínua do monitor inteiro.
+- PipeWire fornece a janela ou o monitor autorizado, mas somente o recorte é convertido para escala de cinza e processado. Não há conversão contínua do monitor inteiro.
 - Amostragem limitada a 5 Hz antes do mapeamento dos pixels. Buffer de captura limitado; trabalho antigo não forma uma fila crescente.
 - OCR no máximo duas vezes por segundo, somente após mudanças relevantes. Modelo Tesseract inglês mantido em um trabalhador com OpenMP limitado a um thread.
 - Estabilidade de texto de 500 ms reduz chamadas durante animação de letras. Fundo animado ainda pode exigir OCR repetido.
@@ -137,7 +141,7 @@ Capturas ficam em memória. A aplicação não salva imagens nem histórico de t
 
 Requisições repetidas usam o cache; erros de rede aplicam espera progressiva de 2 até 32 segundos. Autenticação inválida ou cota esgotada suspendem captura e novas chamadas até correção e retomada manual. Cancelar uma chamada local não garante que o provedor deixe de contabilizá-la. O aplicativo não impõe um teto de gastos: configure cotas no Google Cloud.
 
-OCR retorna vazio em leituras com baixa confiança. Fontes muito estilizadas, texto minúsculo, efeitos e cenários movimentados podem reduzir a qualidade. A primeira versão usa um bloco de texto; não reconstrói a disposição de menus complexos. A altura da legenda acompanha o texto e diminui quando a tradução encurta. Ela pode mudar para cima da região quando não há espaço suficiente abaixo; textos que excedem todo o espaço livre são limitados visualmente para não sobrepor a área de OCR. Prefira selecionar a caixa de diálogo justa.
+OCR retorna vazio em leituras com baixa confiança. Fontes muito estilizadas, texto minúsculo, efeitos e cenários movimentados podem reduzir a qualidade. A primeira versão usa um bloco de texto; não reconstrói a disposição de menus complexos. A altura da legenda acompanha o texto e diminui quando a tradução encurta. No modo monitor, ela pode mudar para cima da região quando não há espaço abaixo. No modo janela, cresce para cima a partir do rodapé do monitor. Textos que excedem o espaço disponível são limitados visualmente. Prefira selecionar a caixa de diálogo justa.
 
 ## Desenvolvimento e testes
 
@@ -158,11 +162,15 @@ Testes de integração adicionais, sem tocar na sessão gráfica atual:
 ```sh
 ./scripts/dev.sh cargo build
 ./scripts/dev.sh dbus-run-session -- env AREA_TRANSLATOR_ISOLATED_TEST=1 bash tests/dbus-smoke.sh
+./scripts/dev.sh dbus-run-session -- env AREA_TRANSLATOR_ISOLATED_TEST=1 python3 tests/portal-smoke.py
 ./scripts/test-gnome.sh
 xvfb-run -a -s '-screen 0 1200x800x24' bash tests/ui-smoke.sh
+xvfb-run -a -s '-screen 0 1200x800x24' bash tests/ui-smoke.sh window
 ```
 
 O teste GNOME cria um compositor isolado, carrega uma cópia instrumentada da extensão em `.deps/`, usa tradução simulada e uma aplicação de teste em tela cheia. A instrumentação não é instalada. Os testes gráficos requerem GNOME 46, Xvfb, Node e Pillow.
+
+O teste de portal usa um serviço D-Bus simulado para conferir os pedidos de janela/monitor, o cancelamento e a ausência de suporte a janelas, sem capturar a tela nem chamar o Google. Requer Python com PyGObject (`python3-gi`). Ele não substitui o teste manual de autorização e captura real com o emulador.
 
 Arquitetura e contrato D-Bus: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -185,7 +193,8 @@ Se o texto lido estiver vazio ou incorreto, ajuste a região para conter somente
 | Extensão não encontrada após instalar | Saia da sessão e entre novamente; depois execute `gnome-extensions enable area-translator@local`. |
 | Legenda não aparece | Confira se a extensão está ativa, se a captura está em execução e se há espaço acima ou abaixo do recorte. |
 | Diálogo de captura cancelado ou compartilhamento encerrado | Abra novamente a seleção e autorize o monitor pelo portal. |
-| Texto deslocado após mover o jogo | Selecione novamente a região; suas coordenadas são fixas na tela. |
+| Texto deslocado após mover o jogo | No modo monitor, selecione novamente; no modo janela, o recorte acompanha o conteúdo. Mudanças de tamanho exigem nova seleção. |
+| Captura por janela pede extensão atualizada | A versão antiga ainda está na memória do GNOME; saia da sessão e entre novamente após instalar a atualização. |
 | Erro de OCR ou modelo ausente | Execute `~/.local/bin/area-translator --check`; instale o modelo inglês ou use a opção `--local-deps`. |
 | Credencial inválida ou cota esgotada | Corrija a configuração no Google Cloud, atualize a chave se necessário e retome manualmente. |
 | Falhas temporárias de rede | Aguarde a tentativa automática com espera progressiva; confira a conexão se persistirem. |

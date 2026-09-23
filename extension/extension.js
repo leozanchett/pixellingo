@@ -9,11 +9,11 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {placeSubtitle, regionOnScreen, subtitleHeight} from './geometry.js';
+import {placeSubtitle, placeWindowSubtitle, regionOnScreen, subtitleHeight} from './geometry.js';
 
 const BUS = 'io.github.areatranslator.Service';
 const PATH = '/io/github/areatranslator/Service';
-const XML = `<node><interface name="io.github.areatranslator.Overlay"><method name="GetMonitors"><arg type="s" direction="out"/></method></interface></node>`;
+const XML = `<node><interface name="io.github.areatranslator.Overlay"><method name="GetMonitors"><arg type="s" direction="out"/></method><method name="GetVersion"><arg type="u" direction="out"/></method></interface></node>`;
 
 export default class AreaTranslator extends Extension {
     enable() {
@@ -67,6 +67,7 @@ export default class AreaTranslator extends Extension {
             return Clutter.EVENT_STOP;
         });
         this._exported = Gio.DBusExportedObject.wrapJSObject(XML, {
+            GetVersion: () => 2,
             GetMonitors: () => JSON.stringify(Main.layoutManager.monitors.map((m, index) => ({
                 x: m.x, y: m.y, width: m.width, height: m.height, name: `Monitor ${index + 1}`,
             }))),
@@ -113,7 +114,8 @@ export default class AreaTranslator extends Extension {
     _update(snapshot) {
         if (!this._alive) return;
         if (snapshot.generation < this._generation) return;
-        if (JSON.stringify(snapshot.region) !== JSON.stringify(this._snapshot?.region)
+        if (snapshot.source_type !== this._snapshot?.source_type
+            || JSON.stringify(snapshot.region) !== JSON.stringify(this._snapshot?.region)
             || JSON.stringify(snapshot.monitor) !== JSON.stringify(this._snapshot?.monitor)) this._preferred = null;
         this._snapshot = snapshot;
         this._generation = snapshot.generation;
@@ -136,18 +138,20 @@ export default class AreaTranslator extends Extension {
             || (!this._editing && (!this._text || !['running', 'retrying'].includes(s.state)))) {
             this._label.hide(); return;
         }
-        const region = regionOnScreen(s.region, s.monitor, s.frame_size);
+        const windowCapture = s.source_type === 'window';
+        const region = windowCapture ? null : regionOnScreen(s.region, s.monitor, s.frame_size);
         const width = Math.min(900, s.monitor.width - 32);
         this._label.text = this._editing ? 'Arraste a legenda e solte para confirmar' : this._text;
         // Release the previous height before measuring the wrapped text. Long
         // translations grow into the available space instead of a fixed 92px box.
         this._label.set_size(width, -1);
         const [, naturalHeight] = this._label.get_preferred_height(width);
-        const height = subtitleHeight(region, s.monitor, naturalHeight);
+        const height = windowCapture ? naturalHeight : subtitleHeight(region, s.monitor, naturalHeight);
         if (!height) { this._label.hide(); return; }
-        const position = placeSubtitle(region, s.monitor, width, height, this._preferred);
+        const position = windowCapture ? placeWindowSubtitle(s.monitor, width, height, this._preferred)
+            : placeSubtitle(region, s.monitor, width, height, this._preferred);
         if (!position) { this._label.hide(); return; }
-        this._label.set_size(width, height);
+        this._label.set_size(position.width, position.height);
         this._label.set_position(Math.round(position.x), Math.round(position.y));
         this._label.show();
     }

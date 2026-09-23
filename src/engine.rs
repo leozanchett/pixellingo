@@ -1,6 +1,6 @@
 use crate::{
     capture::Capture,
-    model::{Frame, Monitor, OCR_INTERVAL, Rect, SCAN_INTERVAL, TextGate, changed},
+    model::{CaptureSource, Frame, Monitor, OCR_INTERVAL, Rect, SCAN_INTERVAL, TextGate, changed},
     ocr::{Ocr, OcrOutput},
     service::{PATH, Reply, Service, SharedState},
     translate::{TranslationError, Translator},
@@ -17,7 +17,7 @@ use tokio::{
 };
 
 pub enum Command {
-    Begin(Reply),
+    Begin(CaptureSource, Reply),
     Region(Rect, Monitor, Reply),
     Pause(Reply),
     Resume(Reply),
@@ -222,25 +222,36 @@ impl Engine {
             shared.snapshot.region = None;
             shared.snapshot.monitor = None;
             shared.snapshot.frame_size = None;
+            shared.snapshot.source_type = None;
+            shared.snapshot.portal_position = None;
+            shared.snapshot.portal_size = None;
         }
         self.show("").await;
     }
 
     async fn command(&mut self, command: Command) {
         match command {
-            Command::Begin(reply) => {
+            Command::Begin(source, reply) => {
                 if self.key.is_empty() {
                     let _ = reply.send(Err("Configure a chave do Google Cloud primeiro.".into()));
                     return;
                 }
                 self.stop().await;
+                self.shared.lock().unwrap().snapshot.source_type = Some(source);
                 self.selection_started = Instant::now();
                 let (tx, rx) = oneshot::channel();
                 self.cancel_open = Some(tx);
-                self.opening = Some(tokio::spawn(Capture::start(rx)));
+                self.opening = Some(tokio::spawn(Capture::start(source, rx)));
                 self.status(
                     "opening",
-                    "Escolha o monitor no diálogo de compartilhamento.",
+                    match source {
+                        CaptureSource::Monitor => {
+                            "Escolha o monitor no diálogo de compartilhamento."
+                        }
+                        CaptureSource::Window => {
+                            "Escolha a janela do emulador no diálogo de compartilhamento."
+                        }
+                    },
                 )
                 .await;
                 let _ = reply.send(Ok(()));
@@ -309,17 +320,9 @@ impl Engine {
             let (w, h) = state
                 .dimensions
                 .ok_or_else(|| anyhow::anyhow!("Aguardando primeiro quadro."))?;
-            region.validate(w, h)?;
+            capture.source.validate_layout(region, (w, h), monitor)?;
             (w, h)
         };
-        // A subtitle needs space outside the OCR rectangle, above or below.
-        let top = region.y as f64 / dimensions.1 as f64 * monitor.height as f64;
-        let bottom =
-            (region.y + region.height) as f64 / dimensions.1 as f64 * monitor.height as f64;
-        anyhow::ensure!(
-            top >= 110.0 || monitor.height as f64 - bottom >= 110.0,
-            "Deixe pelo menos 110 pixels livres acima ou abaixo da área para a legenda."
-        );
         self.invalidate();
         let capture = self.capture.as_ref().unwrap();
         {
@@ -359,13 +362,13 @@ impl Engine {
                     self.selection_started = Instant::now();
                     self.status("selecting", "Marque a região na prévia.").await;
                 }
-                _ => {
+                failed => {
+                    let message = match failed {
+                        Ok(Err(error)) => format!("Captura não iniciada: {error}"),
+                        _ => "Captura não iniciada. Tente selecionar novamente.".into(),
+                    };
                     self.stop().await;
-                    self.status(
-                        "error",
-                        "Captura não iniciada. Tente selecionar o monitor novamente.",
-                    )
-                    .await;
+                    self.status("error", &message).await;
                 }
             }
         }

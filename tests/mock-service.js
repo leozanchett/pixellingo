@@ -8,6 +8,7 @@ const xml = `<node><interface name="${name}">
 <method name="Stop"/><method name="Pause"/><method name="Resume"/>
 <method name="GetClicks"><arg type="u" direction="out"/></method>
 <method name="LongSubtitle"/><method name="ShortSubtitle"/>
+<method name="WindowSource"/>
 <signal name="StatusChanged"><arg type="s"/></signal>
 <signal name="TranslationChanged"><arg type="t"/><arg type="t"/><arg type="s"/></signal>
 </interface></node>`;
@@ -30,6 +31,12 @@ object = Gio.DBusExportedObject.wrapJSObject(xml, {
     GetClicks: () => clicks,
     LongSubtitle: () => setText('Esta é uma tradução longa para verificar se a legenda cresce automaticamente e continua fora da área de reconhecimento. '.repeat(7)),
     ShortSubtitle: () => setText('Tradução curta.'),
+    WindowSource: () => {
+        state.source_type = 'window';
+        state.region = {x: 0, y: 0, width: 640, height: 480};
+        state.frame_size = [640, 480];
+        update('running');
+    },
 });
 object.export(Gio.DBus.session, '/io/github/areatranslator/Service');
 Gio.bus_own_name_on_connection(Gio.DBus.session, name, Gio.BusNameOwnerFlags.NONE, null, null);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {placeSubtitle, overlaps, regionOnScreen, subtitleHeight} from '../extension/geometry.js';
+import {placeSubtitle, placeWindowSubtitle, overlaps, regionOnScreen, subtitleHeight} from '../extension/geometry.js';
 
 test('fractional scale and a monitor with negative origin', () => {
     const region = regionOnScreen({x: 200, y: 1000, width: 1200, height: 300},
@@ -36,4 +36,18 @@ test('long subtitles expand, shrink and stay outside the capture on scaled monit
     assert.ok(position);
     assert.equal(overlaps(position, region), false);
     assert.equal(subtitleHeight(monitor, monitor, 56), 0);
+});
+test('window captions use output monitor coordinates, grow upwards and stay inside it', () => {
+    const monitor = {x: -1920, y: -200, width: 1920, height: 1080};
+    const short = placeWindowSubtitle(monitor, 900, 40);
+    const long = placeWindowSubtitle(monitor, 900, 200);
+    assert.equal(short.y + short.height, 856);
+    assert.equal(long.y + long.height, 856);
+    assert.ok(long.y < short.y);
+    const dragged = placeWindowSubtitle(monitor, 900, 80, {x: 3000, y: -5000});
+    assert.equal(dragged.x + dragged.width, -16);
+    assert.equal(dragged.y, -176);
+    const huge = placeWindowSubtitle(monitor, 5000, 5000);
+    assert.equal(huge.width, 1888);
+    assert.equal(huge.height, 1032);
 });
