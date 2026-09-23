@@ -139,3 +139,16 @@ O coletor lê somente `/proc`; ele não grava telas. Para tempos de OCR/API, exe
 - Os testes GTK passaram no Xvfb e no GNOME 46/Wayland isolado: validação de combinações, conflito com outro atalho personalizado e com Alt+F4, gravação por evento de teclado, salvamento, cancelamento, desativação e restauração. O teste do instalador também confirmou que atualizar não reativa uma combinação desativada.
 - A tela principal e o gravador foram renderizados e inspecionados. O instalador foi executado em prefixo isolado com espaço, incluindo o novo módulo. A interface foi atualizada na instalação local, sem alterar a combinação existente nem reiniciar a captura.
 - Não houve teste de pressão física de teclas durante o jogo; os eventos do gravador foram simulados. Esta mudança configura o atalho de refresh existente; não altera o motor para funcionar exclusivamente sob demanda.
+
+
+## Tradução exclusivamente manual — 2026-09-23
+
+Esta versão substitui o fluxo automático descrito nas seções históricas acima.
+
+- Selecionar/retomar a área e receber novos quadros não executam OCR ou tradução. O atalho configurado ou o botão **Traduzir agora** solicita um único recorte, um OCR e no máximo uma chamada à API; o cache evita chamadas repetidas. Acionamentos durante uma operação são agrupados.
+- O serviço mantém uma referência ao buffer mais recente do PipeWire e só converte o recorte sob demanda. Isso permite reler uma cena estática. A referência é liberada antes de pausar/fechar o pipeline. O diagnóstico também pode solicitar um recorte, sem OCR/rede.
+- A legenda anterior permanece durante a leitura, resposta da API, leitura vazia e falha de rede. Não há repetição automática após erros; a espera progressiva limita novos acionamentos. Pausa, encerramento e seleção de outra área limpam a legenda e invalidam trabalhos antigos.
+- A combinação do usuário estava registrada, e o serviço anterior havia recebido pedidos de refresh; isso não demonstra que todos os acionamentos físicos chegaram. O fluxo anterior ainda aguardava três leituras iguais. O cliente também ocultava erros de captura inativa; agora envia uma notificação local sem abrir GTK.
+- Passaram nove testes unitários e quatro testes de integração do motor em D-Bus isolado, incluindo Tesseract real e API HTTP simulada. Mudanças de imagem sem acionamento produziram zero OCRs adicionais; três pedidos (diálogo, vazio, diálogo repetido) produziram três OCRs e apenas uma chamada à API. Também foram verificados agrupamento de pressões, cache, erros 503/403/429 sem repetição automática, bloqueio/espera progressiva, pausa, cancelamento e descarte de resultados antigos.
+- Cliente do atalho testado com serviço de notificações simulado: serviço ausente e pedido rejeitado geram aviso; pedido aceito chama Refresh uma vez e não gera aviso. Ciclo D-Bus, Clippy, formatação, compilação release, interface GTK e extensão no GNOME 46/Wayland isolado passaram.
+- Serviço e interface instalados localmente; atalho Ctrl+A preservado. O snapshot instalado informa modo manual, inicialmente com zero pedidos, OCRs e chamadas à API. O teste físico do atalho no emulador e a medição de desempenho de 15 minutos ainda dependem de validação real.

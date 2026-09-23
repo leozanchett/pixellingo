@@ -1,5 +1,5 @@
 use crate::{
-    capture::{FrameSlot, preview_png},
+    capture::{FrameSlot, crop_now, preview_png},
     engine::Command,
 };
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,8 @@ pub struct Snapshot {
     pub portal_position: Option<(i32, i32)>,
     pub portal_size: Option<(i32, i32)>,
     pub source_type: Option<crate::model::CaptureSource>,
+    pub mode: String,
+    pub manual_requests: u64,
     pub ocr_count: u64,
     pub api_count: u64,
     pub cache_hits: u64,
@@ -54,6 +56,8 @@ impl Default for Snapshot {
             portal_position: None,
             portal_size: None,
             source_type: None,
+            mode: "manual".into(),
+            manual_requests: 0,
             ocr_count: 0,
             api_count: 0,
             cache_hits: 0,
@@ -171,29 +175,8 @@ impl Service {
             .frames
             .clone()
             .ok_or_else(|| zbus::fdo::Error::Failed("Selecione uma área primeiro.".into()))?;
-        let (reply, receive) = oneshot::channel();
-        {
-            let mut state = slot.lock().unwrap();
-            if state.paused || state.region.is_none() {
-                return Err(zbus::fdo::Error::Failed(
-                    "Inicie ou retome a tradução para conferir o recorte.".into(),
-                ));
-            }
-            if state
-                .diagnostic_request
-                .as_ref()
-                .is_some_and(|pending| !pending.is_closed())
-            {
-                return Err(zbus::fdo::Error::Failed(
-                    "Já existe uma prévia em andamento.".into(),
-                ));
-            }
-            state.diagnostic_request = Some(reply);
-        }
-        let frame = tokio::time::timeout(std::time::Duration::from_secs(3), receive).await
-            .map_err(|_| zbus::fdo::Error::Failed("Não chegou um novo quadro. Deixe a janela capturada visível e tente novamente.".into()))?
-            .map_err(|_| zbus::fdo::Error::Failed("A captura foi interrompida.".into()))?;
         tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+            let frame = crop_now(&slot)?;
             let mut bytes = Vec::new();
             {
                 let mut encoder = png::Encoder::new(&mut bytes, frame.width, frame.height);
@@ -245,30 +228,25 @@ mod tests {
         }
         shared.lock().unwrap().frames = Some(frames.clone());
         assert!(service.get_crop_preview().await.is_err());
-        assert!(frames.lock().unwrap().diagnostic_request.is_none());
         frames.lock().unwrap().paused = false;
-        let deliver = async {
-            let reply = loop {
-                if let Some(reply) = frames.lock().unwrap().diagnostic_request.take() {
-                    break reply;
-                }
-                tokio::task::yield_now().await;
-            };
-            reply
-                .send(crate::model::Frame {
-                    width: 16,
-                    height: 16,
-                    gray: vec![77; 256],
-                    captured: Instant::now(),
-                })
-                .ok()
-                .unwrap();
-        };
-        let (png, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            tokio::join!(service.get_crop_preview(), deliver)
-        })
-        .await
-        .unwrap();
+        gstreamer::init().unwrap();
+        let info = gstreamer_video::VideoInfo::builder(gstreamer_video::VideoFormat::Rgbx, 40, 60)
+            .build()
+            .unwrap();
+        let mut buffer = gstreamer::Buffer::with_size(info.size()).unwrap();
+        buffer
+            .get_mut()
+            .unwrap()
+            .map_writable()
+            .unwrap()
+            .as_mut_slice()
+            .fill(77);
+        let sample = gstreamer::Sample::builder()
+            .buffer(&buffer)
+            .caps(&info.to_caps().unwrap())
+            .build();
+        crate::capture::retain_sample(&sample, &mut frames.lock().unwrap()).unwrap();
+        let png = service.get_crop_preview().await;
         let mut reader = png::Decoder::new(std::io::Cursor::new(png.unwrap()))
             .read_info()
             .unwrap();
@@ -277,7 +255,7 @@ mod tests {
         assert_eq!((info.width, info.height), (16, 16));
         assert_eq!(info.color_type, png::ColorType::Grayscale);
         assert_eq!(pixels, vec![77; 256]);
-        assert!(frames.lock().unwrap().diagnostic_request.is_none());
+        assert!(frames.lock().unwrap().frame.is_none());
         assert_eq!(shared.lock().unwrap().snapshot.api_count, 0);
     }
 }

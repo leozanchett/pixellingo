@@ -1,4 +1,4 @@
-use crate::model::{CaptureSource, Frame, Rect, SCAN_INTERVAL};
+use crate::model::{CaptureSource, Frame, Rect};
 use anyhow::{Context, Result};
 use ashpd::desktop::{
     Session,
@@ -22,8 +22,8 @@ pub struct SharedFrames {
     pub dimensions: Option<(u32, u32)>,
     pub error: Option<String>,
     pub paused: bool,
-    pub diagnostic_request: Option<tokio::sync::oneshot::Sender<Frame>>,
-    last_sample: Option<Instant>,
+    // Keep one ref-counted PipeWire buffer; map/crop only on explicit requests.
+    pub latest_sample: Option<gst::Sample>,
 }
 
 pub type FrameSlot = Arc<Mutex<SharedFrames>>;
@@ -105,17 +105,7 @@ impl Capture {
                     .new_sample(move |sink| {
                         let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
                         let mut state = callback_slot.lock().unwrap();
-                        let now = Instant::now();
-                        // Throttle BEFORE mapping/converting. No full-frame videoconvert.
-                        if state.paused
-                            || state
-                                .last_sample
-                                .is_some_and(|t| now.duration_since(t) < SCAN_INTERVAL)
-                        {
-                            return Ok(gst::FlowSuccess::Ok);
-                        }
-                        state.last_sample = Some(now);
-                        if let Err(error) = consume_sample(&sample, &mut state) {
+                        if let Err(error) = retain_sample(&sample, &mut state) {
                             state.error = Some(error.to_string());
                         }
                         Ok(gst::FlowSuccess::Ok)
@@ -167,10 +157,12 @@ impl Capture {
 
     pub fn pause(&self, paused: bool) -> Result<()> {
         let mut state = self.slot.lock().unwrap();
+        if state.paused == paused {
+            return Ok(());
+        }
         state.paused = paused;
         state.frame = None;
-        state.diagnostic_request = None;
-        state.last_sample = None;
+        state.latest_sample = None;
         drop(state);
         self.pipeline.set_state(if paused {
             gst::State::Paused
@@ -200,19 +192,29 @@ impl Capture {
     }
 
     pub async fn close(self) {
+        self.release_frames();
         let _ = self.pipeline.set_state(gst::State::Null);
         let _ = self.session.close().await;
+    }
+
+    fn release_frames(&self) {
+        let mut state = self.slot.lock().unwrap();
+        state.paused = true;
+        state.latest_sample = None;
+        state.frame = None;
+        state.preview = None;
     }
 }
 
 impl Drop for Capture {
     fn drop(&mut self) {
         self.closed_listener.abort();
+        self.release_frames();
         let _ = self.pipeline.set_state(gst::State::Null);
     }
 }
 
-fn consume_sample(sample: &gst::Sample, state: &mut SharedFrames) -> Result<()> {
+fn sample_info(sample: &gst::Sample, state: &mut SharedFrames) -> Result<gst_video::VideoInfo> {
     let info = gst_video::VideoInfo::from_caps(sample.caps().context("Captura sem formato.")?)?;
     let dimensions = (info.width(), info.height());
     anyhow::ensure!(
@@ -225,6 +227,44 @@ fn consume_sample(sample: &gst::Sample, state: &mut SharedFrames) -> Result<()> 
         anyhow::bail!("O tamanho da captura mudou. Selecione a área novamente.");
     }
     state.dimensions = Some(dimensions);
+    Ok(info)
+}
+
+pub(crate) fn retain_sample(sample: &gst::Sample, state: &mut SharedFrames) -> Result<()> {
+    if state.paused {
+        return Ok(());
+    }
+    sample_info(sample, state)?;
+    state.latest_sample = Some(sample.clone());
+    if state.region.is_none() && state.preview.is_none() {
+        consume_sample(sample, state)?;
+    }
+    Ok(())
+}
+
+pub fn crop_now(slot: &FrameSlot) -> Result<Frame> {
+    let mut state = slot.lock().unwrap();
+    if let Some(error) = &state.error {
+        anyhow::bail!("{error}");
+    }
+    anyhow::ensure!(
+        !state.paused && state.region.is_some(),
+        "Selecione uma área e retome a captura primeiro."
+    );
+    let sample = state
+        .latest_sample
+        .clone()
+        .context("Nenhum quadro disponível. Deixe a janela capturada visível e tente novamente.")?;
+    consume_sample(&sample, &mut state)?;
+    state
+        .frame
+        .take()
+        .context("Não foi possível recortar a captura.")
+}
+
+fn consume_sample(sample: &gst::Sample, state: &mut SharedFrames) -> Result<()> {
+    let info = sample_info(sample, state)?;
+    let dimensions = (info.width(), info.height());
     // During selection retain a single frozen preview, not a stream of full images.
     if state.region.is_none() && state.preview.is_some() {
         return Ok(());
@@ -280,11 +320,6 @@ fn consume_sample(sample: &gst::Sample, state: &mut SharedFrames) -> Result<()> 
             gray: pixels,
             captured: Instant::now(),
         };
-        if let Some(reply) = state.diagnostic_request.take()
-            && !reply.is_closed()
-        {
-            let _ = reply.send(frame.clone());
-        }
         state.frame = Some(frame);
     }
     Ok(())
@@ -340,16 +375,23 @@ mod tests {
             }),
             ..Default::default()
         };
-        let (reply, mut diagnostic) = tokio::sync::oneshot::channel();
-        state.diagnostic_request = Some(reply);
-        consume_sample(&sample, &mut state).unwrap();
-        let preview = diagnostic.try_recv().unwrap();
-        let frame = state.frame.as_ref().unwrap();
-        assert_eq!(frame.gray.len(), 256);
-        assert!(frame.gray.iter().all(|p| *p == 76));
-        assert_eq!(preview.gray, frame.gray);
-        assert_eq!((preview.width, preview.height), (16, 16));
-        assert!(state.diagnostic_request.is_none(), "Only copy on demand");
+        for _ in 0..20 {
+            retain_sample(&sample, &mut state).unwrap();
+        }
+        assert!(
+            state.frame.is_none(),
+            "Incoming frames must not trigger cropping"
+        );
+        let slot = Arc::new(Mutex::new(state));
+        for _ in 0..2 {
+            let frame = crop_now(&slot).unwrap();
+            assert_eq!(frame.gray.len(), 256);
+            assert!(frame.gray.iter().all(|p| *p == 76));
+            assert_eq!((frame.width, frame.height), (16, 16));
+            assert!(slot.lock().unwrap().frame.is_none());
+        }
+        slot.lock().unwrap().paused = true;
+        assert!(crop_now(&slot).is_err());
     }
 
     #[test]

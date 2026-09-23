@@ -28,6 +28,7 @@ for attempt in range(30):
 assert result is not None and result.returncode == 0, 'Test service did not start'
 state = json.loads(ast.literal_eval(result.stdout)[0])
 assert state['state'] == 'idle', state
+assert state['mode'] == 'manual' and state['manual_requests'] == 0
 assert call('Refresh').returncode != 0, 'Refresh requires an active region'
 assert call('GetCropPreview').returncode != 0, 'Crop preview requires an active capture'
 assert call('BeginSelection').returncode != 0, 'Capture must require configuration'
@@ -42,6 +43,7 @@ state_text = call('GetStatus').stdout
 assert 'test-only-no-network' not in state_text
 state = json.loads(ast.literal_eval(state_text)[0])
 assert state['api_count'] == 0 and state['ocr_count'] == 0
+assert state['manual_requests'] == 0
 assert state['captured_frames'] == 0 and state['last_frame_age_ms'] is None
 assert state['ocr_text'] == '' and state['ocr_confidence'] is None
 assert state['api_successes'] == 0 and not state['api_pending']

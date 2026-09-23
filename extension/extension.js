@@ -34,7 +34,7 @@ export default class AreaTranslator extends Extension {
             Gio.Subprocess.new(['gjs', '-m', GLib.build_filenamev([GLib.get_user_data_dir(), 'area-translator', 'ui', 'app.js'])], Gio.SubprocessFlags.NONE);
         });
         this._toggle = this._panel.menu.addAction('Pausar / retomar', () => this._togglePause());
-        this._panel.menu.addAction('Atualizar tradução', () => {
+        this._panel.menu.addAction('Traduzir agora', () => {
             if (!this._editing) this._call('Refresh');
         });
         this._panel.menu.addAction('Reposicionar legenda', () => this._startEditing());
@@ -138,7 +138,7 @@ export default class AreaTranslator extends Extension {
     _render() {
         const s = this._snapshot;
         if (!s?.region || !s.monitor || !s.frame_size || Main.overview.visible || Main.sessionMode.isLocked
-            || (!this._editing && (!this._text || !['running', 'retrying'].includes(s.state)))) {
+            || (!this._editing && (!this._text || !['running', 'retrying', 'blocked'].includes(s.state)))) {
             this._label.hide(); return;
         }
         const windowCapture = s.source_type === 'window';

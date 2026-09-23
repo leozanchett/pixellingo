@@ -75,7 +75,7 @@ function page(title, subtitle) {
 
 function settings() {
     window.set_default_size(560, 300);
-    const box = page('Tradutor de área', 'Inglês → português brasileiro, sobre qualquer aplicativo.');
+    const box = page('Tradutor de área', 'Modo manual: inglês → português brasileiro. A tradução só acontece ao pressionar o atalho ou clicar em Traduzir agora.');
     const entry = new Gtk.PasswordEntry({placeholder_text: credentialsReady
         ? 'Chave salva no chaveiro — preencha apenas para trocar' : 'Chave da Cloud Translation API', show_peek_icon: true});
     box.append(entry);
@@ -107,13 +107,13 @@ function settings() {
         message.label = 'Atalho salvo. A alteração já está ativa no Ubuntu.';
     })));
     box.append(shortcutRow);
-    box.append(button('Atualizar tradução', async () => {
+    box.append(button('Traduzir agora', async () => {
         await service('Refresh');
-        message.label = 'Relendo a área selecionada. Você pode voltar ao jogo.';
+        message.label = 'Pedido enviado. A legenda será substituída quando a tradução estiver pronta.';
     }));
     box.append(button('Diagnóstico: captura, OCR e tradução', diagnostics));
     box.append(message);
-    box.append(new Gtk.Label({label: 'Depois de iniciar, use o ícone “Tradutor de área” na barra superior para pausar, reposicionar a legenda ou encerrar.', wrap: true, xalign: 0}));
+    box.append(new Gtk.Label({label: 'Depois de selecionar a área, volte ao jogo e pressione o atalho quando o texto estiver completo. A legenda permanece até a próxima tradução ou até pausar/encerrar a captura.', wrap: true, xalign: 0}));
 }
 
 function diagnostics() {
@@ -160,9 +160,9 @@ function diagnostics() {
             if (revision !== pageRevision) return;
             const s = JSON.parse(json);
             capture.label = !s.region ? 'Sem área ativa. Volte e selecione a caixa de diálogo.'
-                : `${s.source_type === 'window' ? 'Janela' : 'Monitor'}: ${s.region.width} × ${s.region.height} px; ${s.captured_frames ?? '—'} quadros recebidos nesta sessão; último quadro há ${s.last_frame_age_ms ?? '—'} ms.`;
+                : `${s.source_type === 'window' ? 'Janela' : 'Monitor'}: ${s.region.width} × ${s.region.height} px; ${s.manual_requests ?? 0} pedidos manuais; último recorte há ${s.last_frame_age_ms ?? '—'} ms.`;
             ocr.label = `${s.ocr_count ?? 0} leituras; confiança da última: ${s.ocr_confidence ?? '—'}/100; tempo: ${s.ocr_ms ?? 0} ms.`;
-            if (s.ocr_confirmations) ocr.label += ` Confirmando mudança: ${Math.min(s.ocr_confirmations, 3)}/3 leituras; aguardando estabilidade.`;
+            ocr.label += ' Uma leitura por acionamento, sem OCR automático.';
             source.label = s.ocr_text || (s.ocr_confidence == null ? 'Nenhuma leitura nesta sessão.'
                 : 'Nenhum texto legível encontrado. Confira se a frase aparece inteira na imagem do recorte.');
             network.label = `${s.api_count ?? 0} tentativas; ${s.api_successes ?? '—'} concluídas; ${s.cache_hits ?? 0} usos do cache; API: ${s.api_ms ?? 0} ms.${s.api_pending ? ' Aguardando resposta do Google…' : ''}`;
@@ -281,7 +281,7 @@ function renderSelection(bytes, status, monitors) {
         selectionCancelled = true; selecting = false;
         await service('Stop'); settings();
     }));
-    actions.append(button('Iniciar tradução', async () => {
+    actions.append(button('Concluir seleção', async () => {
         if (!region || region.width < 16 || region.height < 16) throw new Error('Arraste para marcar uma área de texto.');
         const monitor = monitors[dropdown.selected];
         if (!monitor) throw new Error('Selecione o monitor para a legenda.');

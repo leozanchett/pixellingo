@@ -16,7 +16,7 @@ impl TranslationError {
                 "Verifique a chave e a ativação da Cloud Translation API nas configurações."
             }
             Self::Quota => "Limite da API atingido. Verifique sua cota e retome manualmente.",
-            Self::Temporary => "Tradução indisponível. Nova tentativa em instantes.",
+            Self::Temporary => "Tradução indisponível. Tente novamente pelo atalho.",
             Self::InvalidResponse => "A API retornou uma resposta inválida.",
         }
     }

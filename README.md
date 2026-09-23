@@ -1,6 +1,6 @@
 # PixelLingo — Tradução além dos pixels
 
-Seleciona uma região de uma janela ou monitor, reconhece o texto em inglês localmente e mostra a tradução para português brasileiro em uma legenda transparente. Independente de emulador, jogo ou aplicativo.
+Ao acionar um atalho configurável, recorta uma região de uma janela ou monitor, reconhece o texto em inglês localmente e mostra a tradução para português brasileiro em uma legenda transparente. Independente de emulador, jogo ou aplicativo.
 
 **Plataforma inicial:** Ubuntu 24.04, GNOME Shell 46 e Wayland, x86-64. O serviço é Rust, a interface sob demanda é GTK4/GJS e a legenda é uma extensão do GNOME. A tradução usa Google Cloud Translation Basic/NMT.
 
@@ -32,7 +32,7 @@ Seleciona uma região de uma janela ou monitor, reconhece o texto em inglês loc
 | Entrada | Preserva o foco e permite passagem de cliques durante o uso |
 | OCR | Tesseract local com modelo inglês `tessdata_fast` |
 | Tradução | Google Cloud Translation Basic/NMT; requer internet e credencial própria |
-| Controles | Menu no painel do GNOME, pausa/retomada e atualização manual |
+| Controles | Tradução exclusivamente manual por atalho configurável ou botão; pausa/retomada |
 
 Outras versões do GNOME, KDE, X11, Windows e macOS não foram validadas. Não há tradução offline nem seleção de várias regiões simultâneas. No modo janela, o recorte acompanha seu deslocamento; a legenda permanece no monitor escolhido.
 
@@ -41,9 +41,9 @@ Outras versões do GNOME, KDE, X11, Windows e macOS não foram validadas. Não h
 ```mermaid
 flowchart LR
     A[Janela ou monitor autorizado pelo portal] --> B[PipeWire / GStreamer]
-    B --> C[Recorte e detecção de mudanças]
+    B --> C[Recorte solicitado pelo atalho]
     C --> D[OCR Tesseract local]
-    D --> E[Estabilidade e cache em memória]
+    D --> E[Cache em memória]
     E -->|Somente texto por HTTPS| F[Google Cloud Translation]
     E -->|Tradução em cache| G[D-Bus local]
     F --> G
@@ -97,15 +97,15 @@ Na primeira instalação, o GNOME pode precisar que você **saia da sessão e en
 2. Cole a chave na janela e clique em **Salvar chave**. Ela fica no chaveiro do sistema, não em arquivo de configuração. Não coloque a chave no repositório.
 3. Em **O que capturar?**, escolha **Janela do aplicativo** (padrão) ou **Monitor inteiro**. Clique em **Selecionar área** e autorize a janela do emulador ou o monitor no diálogo do Ubuntu.
 4. Marque a caixa de texto na prévia. No modo janela, escolha **Onde exibir a legenda**; no modo monitor, confirme o monitor compartilhado e deixe pelo menos 110 pixels lógicos livres acima ou abaixo do recorte.
-5. Clique em **Iniciar tradução**. A janela de configuração fecha; o controle fica no ícone de dicionário da barra superior.
+5. Clique em **Concluir seleção**, volte ao jogo e pressione o atalho quando o texto estiver completo. Selecionar a área não inicia OCR nem tradução.
 
-**Super + Shift + R** atualiza a tradução: limpa a legenda atual e força uma nova leitura da mesma região, sem reabrir o compartilhamento. A leitura ainda precisa ser confirmada três vezes; traduções conhecidas são reutilizadas do cache. Funciona somente com a tradução ativa e não retoma uma captura pausada ou bloqueada. Também há o botão **Atualizar tradução** na configuração e no menu da extensão.
+**Super + Shift + R** é o atalho padrão; vale a combinação que você configurar. Cada acionamento faz **uma leitura de OCR** e no máximo uma chamada à API; textos conhecidos usam o cache. Também é possível clicar em **Traduzir agora**. Não há tradução automática nem confirmação por três leituras. Enquanto um pedido estiver em andamento, novas pressões são agrupadas, sem criar fila. Se a captura estiver encerrada ou pausada, o atalho mostra uma notificação com a orientação necessária.
 
 O instalador registra o refresh nos atalhos personalizados do Ubuntu; ele funciona na sessão atual. Em uma atualização, o novo item do menu aparece quando o GNOME carregar novamente a extensão, normalmente no próximo login. Para mudar a combinação, abra o tradutor e clique em **Alterar atalho…**, pressione as teclas desejadas e clique em **Salvar**. Você também pode restaurar o padrão ou desativar o atalho; a escolha é preservada nas atualizações. A interface verifica conflitos com atalhos personalizados e atalhos comuns do GNOME. Alternativamente, use Configurações do Ubuntu → Teclado → Atalhos personalizados → **PixelLingo — Atualizar tradução**. Pelo terminal: `~/.local/bin/area-translator-refresh`.
 
 **Super + Shift + T** pausa/retoma. O menu também permite selecionar outra área, encerrar a captura, habilitar fundo translúcido e reposicionar a legenda. Durante o reposicionamento, a captura pausa: arraste a legenda e solte. O modo termina automaticamente após 15 segundos. Fora desse modo, a legenda deixa os cliques passarem e não recebe foco.
 
-A legenda não tem prazo de expiração enquanto o texto confirmado continuar o mesmo. Uma nova frase só é aceita após três leituras consecutivas iguais, cobrindo pelo menos um segundo; uma ausência de texto exige também três leituras, cobrindo pelo menos 1,5 segundo. Leituras diferentes ou isoladas mantêm a legenda anterior e não disparam tradução. Se a imagem parar, o serviço usa o recorte mais recente em memória para concluir as confirmações e depois para o OCR. Pausar, encerrar ou trocar a região oculta a legenda imediatamente. No diagnóstico, a contagem de confirmação mostra quando uma mudança ainda está em análise.
+A legenda permanece até outra tradução ficar pronta ou até você pausar/encerrar a captura. Ela não é apagada ao acionar o atalho, nem por leitura vazia ou erro de rede. A troca da região limpa a legenda. No diagnóstico, acompanhe os pedidos manuais e as contagens de OCR/API.
 
 No modo **Janela do aplicativo**, a captura contém somente a janela autorizada; mover a janela mantém o recorte relativo ao seu conteúdo. A legenda fica inicialmente no rodapé do monitor escolhido e pode ser reposicionada pelo menu. Ela não acompanha a posição da janela e não faz parte do stream capturado.
 
@@ -121,8 +121,8 @@ No diagnóstico, **Conferir imagem enviada ao OCR** mostra um único recorte rec
 
 1. Abra seu emulador e um jogo com diálogos em inglês. Escolha a resolução e a posição final da janela; se for jogar em tela cheia, entre nesse modo antes de selecionar a área.
 2. Pare em um diálogo estático e legível. Abra **Tradutor de área** e selecione somente a caixa de texto, evitando elementos animados sempre que possível.
-3. Escolha **Janela do aplicativo**, autorize a janela do jogo no diálogo do Ubuntu, marque o retângulo na prévia e escolha o monitor da legenda. Inicie a tradução e volte ao emulador.
-4. Aguarde a frase estabilizar e confira a legenda em português no monitor escolhido. Avance alguns diálogos, repita um texto e teste **Super + Shift + T**.
+3. Escolha **Janela do aplicativo**, autorize a janela do jogo no diálogo do Ubuntu, marque o retângulo na prévia e escolha o monitor da legenda. Conclua a seleção e volte ao emulador.
+4. Espere a frase terminar de aparecer, pressione seu atalho e confira a legenda em português. Avance alguns diálogos: nenhuma tradução deve acontecer até o próximo acionamento. Repita um texto para testar o cache e use **Super + Shift + T** para pausar/retomar.
 5. Confira se o teclado e o controle continuam no emulador e se cliques atravessam a legenda. No modo janela, mova o emulador para conferir que a leitura acompanha seu conteúdo. Após redimensionar, use **Selecionar outra área**.
 6. Ao terminar, encerre a captura pelo menu do tradutor.
 
@@ -131,9 +131,8 @@ Se a leitura estiver imprecisa, aumente o tamanho do texto ou a escala de render
 ## Como mantém o consumo baixo
 
 - PipeWire fornece a janela ou o monitor autorizado, mas somente o recorte é convertido para escala de cinza e processado. Não há conversão contínua do monitor inteiro.
-- Amostragem limitada a 5 Hz antes do mapeamento dos pixels. Buffer de captura limitado; trabalho antigo não forma uma fila crescente.
-- OCR no máximo duas vezes por segundo, após mudanças relevantes ou uma confirmação pendente de texto. Modelo Tesseract inglês mantido em um trabalhador com OpenMP limitado a um thread.
-- Três leituras iguais por pelo menos um segundo reduzem chamadas durante animação de letras e oscilações do OCR. Fundo animado ainda pode exigir OCR repetido.
+- O compartilhamento permanece aberto e mantém somente uma referência ao buffer mais recente do PipeWire, sem copiar ou converter seus pixels continuamente. Isso permite traduzir também cenas estáticas, sem exigir um novo quadro após a tecla.
+- Recorte e OCR ocorrem apenas por acionamento. O diagnóstico também pode solicitar um recorte, sem OCR nem rede. Modelo Tesseract inglês mantido em um trabalhador com OpenMP limitado a um thread.
 - Cache LRU de 2.000 traduções em memória, compartilhado entre seleções durante a vida do serviço.
 - Apenas uma tradução em andamento. Resultados de seleções, pausas e diálogos antigos são descartados.
 - Ao pausar, o pipeline entra em `Paused`; ao encerrar, a sessão do portal fecha e o modelo é liberado pelo trabalhador.
@@ -147,7 +146,7 @@ As metas de 250 MB, 5% da CPU total e menos de 3% de impacto no FPS **não são 
 
 Capturas ficam em memória. A aplicação não salva imagens nem histórico de texto em disco. Somente o texto reconhecido segue para a API oficial por HTTPS. Logs contêm tempos e contagens, sem chave, imagens ou conteúdo dos diálogos. Imagens em `tests/fixtures` e nos registros de validação são cenas sintéticas.
 
-Requisições repetidas usam o cache; erros de rede aplicam espera progressiva de 2 até 32 segundos. Autenticação inválida ou cota esgotada suspendem captura e novas chamadas até correção e retomada manual. Cancelar uma chamada local não garante que o provedor deixe de contabilizá-la. O aplicativo não impõe um teto de gastos: configure cotas no Google Cloud.
+Requisições repetidas usam o cache; erros de rede impõem espera de 2 até 32 segundos antes de aceitar outro acionamento. Não há repetição automática da chamada. Autenticação inválida ou cota esgotada suspendem captura e novas chamadas até correção e retomada manual. Cancelar uma chamada local não garante que o provedor deixe de contabilizá-la. O aplicativo não impõe um teto de gastos: configure cotas no Google Cloud.
 
 OCR retorna vazio em leituras com baixa confiança. Fontes muito estilizadas, texto minúsculo, efeitos e cenários movimentados podem reduzir a qualidade. A primeira versão usa um bloco de texto; não reconstrói a disposição de menus complexos. A altura da legenda acompanha o texto e diminui quando a tradução encurta. No modo monitor, ela pode mudar para cima da região quando não há espaço abaixo. No modo janela, cresce para cima a partir do rodapé do monitor. Textos que excedem o espaço disponível são limitados visualmente. Prefira selecionar a caixa de diálogo justa.
 
@@ -159,6 +158,7 @@ OCR retorna vazio em leituras com baixa confiança. Fontes muito estilizadas, te
 ./scripts/dev.sh cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 node --test tests/geometry.mjs
+dbus-run-session -- env AREA_TRANSLATOR_ISOLATED_TEST=1 GIO_USE_VFS=local gjs -m tests/refresh-client.js
 glib-compile-schemas --strict --dry-run extension/schemas
 ./scripts/dev.sh target/release/area-translator --check
 ```
@@ -201,13 +201,13 @@ Se o texto lido estiver vazio ou incorreto, ajuste a região para conter somente
 | Sintoma | O que verificar |
 | --- | --- |
 | Extensão não encontrada após instalar | Saia da sessão e entre novamente; depois execute `gnome-extensions enable area-translator@local`. |
-| Legenda não aparece | Confira se a extensão está ativa, se a captura está em execução e se há espaço acima ou abaixo do recorte. |
+| Legenda não aparece | Após selecionar a área, pressione o atalho. Confira a extensão, o estado da captura e o diagnóstico se não aparecer. |
 | Diálogo de captura cancelado ou compartilhamento encerrado | Abra novamente a seleção e autorize o monitor pelo portal. |
 | Texto deslocado após mover o jogo | No modo monitor, selecione novamente; no modo janela, o recorte acompanha o conteúdo. Mudanças de tamanho exigem nova seleção. |
 | Captura por janela pede extensão atualizada | A versão antiga ainda está na memória do GNOME; saia da sessão e entre novamente após instalar a atualização. |
 | Erro de OCR ou modelo ausente | Execute `~/.local/bin/area-translator --check`; instale o modelo inglês ou use a opção `--local-deps`. |
 | Credencial inválida ou cota esgotada | Corrija a configuração no Google Cloud, atualize a chave se necessário e retome manualmente. |
-| Falhas temporárias de rede | Aguarde a tentativa automática com espera progressiva; confira a conexão se persistirem. |
+| Falhas temporárias de rede | Aguarde alguns segundos e pressione o atalho novamente; confira a conexão se persistirem. |
 | Fonte estilizada ou leitura incompleta | Selecione uma caixa menor e aumente o texto no jogo; consulte os limites de OCR acima. |
 
 ## Estrutura do projeto
