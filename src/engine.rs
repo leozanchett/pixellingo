@@ -435,7 +435,7 @@ impl Engine {
             }
         }
         self.finish_network().await;
-        self.translate_ready().await;
+        self.translate_ready(Instant::now()).await;
     }
 
     async fn ocr_result(&mut self, result: OcrResult) {
@@ -464,12 +464,13 @@ impl Engine {
                         task.abort();
                         self.shared.lock().unwrap().snapshot.api_pending = false;
                     }
-                    self.show("").await;
+                    // Keep the displayed subtitle until this candidate has
+                    // stabilized. One noisy/empty OCR must not make it blink.
                 }
                 if result.sequence == self.sequence {
                     self.dirty = false;
                 }
-                self.translate_ready().await;
+                self.translate_ready(Instant::now()).await;
             }
             Err(error) => {
                 self.stop().await;
@@ -478,27 +479,38 @@ impl Engine {
         }
     }
 
-    async fn translate_ready(&mut self) {
+    async fn translate_ready(&mut self, now: Instant) {
         if !self.running
             || self.shown == Some(self.gate.revision)
             || self.network.is_some()
             || self.dirty
             || self.ocr_busy
             || !self.gate.ready(
-                Instant::now(),
-                self.last_image_change.elapsed() >= crate::model::STABLE_INTERVAL,
+                now,
+                now.duration_since(self.last_image_change) >= crate::model::STABLE_INTERVAL,
             )
         {
             return;
         }
         let source = self.gate.text.clone();
+        if source.is_empty() {
+            self.shown = Some(self.gate.revision);
+            self.show("").await;
+            return;
+        }
         if let Some(text) = self.cache.get(&source).cloned() {
             self.shared.lock().unwrap().snapshot.cache_hits += 1;
             self.shown = Some(self.gate.revision);
             self.show(&text).await;
             return;
         }
-        if Instant::now() < self.retry_at {
+        // A different stable phrase has replaced the old one. Cached results
+        // above replace it directly; otherwise clear while the new API runs.
+        let has_subtitle = !self.shared.lock().unwrap().snapshot.translation.is_empty();
+        if has_subtitle {
+            self.show("").await;
+        }
+        if now < self.retry_at {
             return;
         }
         // Bound request size; noise/huge selections must not create expensive calls.
@@ -606,5 +618,105 @@ mod tests {
         assert!(is_current(2, 5, 2, 5));
         assert!(!is_current(2, 5, 1, 5));
         assert!(!is_current(2, 5, 2, 4));
+    }
+
+    #[tokio::test]
+    #[ignore = "run with AREA_TRANSLATOR_ISOLATED_TEST=1 under dbus-run-session"]
+    async fn subtitle_survives_same_text_and_transient_ocr_until_a_confirmed_change() {
+        assert_eq!(
+            std::env::var("AREA_TRANSLATOR_ISOLATED_TEST").as_deref(),
+            Ok("1")
+        );
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(crate::service::Shared::default()));
+        let connection = zbus::Connection::session().await.unwrap();
+        let mut engine = Engine::new(shared.clone(), connection).unwrap();
+        engine.running = true;
+        engine
+            .cache
+            .put("Keep reading.".into(), "Continue lendo.".into());
+        engine
+            .cache
+            .put("Next phrase.".into(), "Próxima frase.".into());
+
+        async fn read(engine: &mut Engine, text: &str) {
+            engine
+                .ocr_result(OcrResult {
+                    generation: engine.generation,
+                    sequence: engine.sequence,
+                    captured: Instant::now(),
+                    result: Ok(OcrOutput {
+                        text: text.into(),
+                        confidence: if text.is_empty() { 0 } else { 95 },
+                        elapsed_ms: 1,
+                    }),
+                })
+                .await;
+        }
+        let caption = || shared.lock().unwrap().snapshot.translation.clone();
+        let stable = || Instant::now() + Duration::from_millis(600);
+
+        read(&mut engine, "Keep reading.").await;
+        engine.translate_ready(stable()).await;
+        assert_eq!(caption(), "Continue lendo.");
+        let revision = engine.gate.revision;
+        read(&mut engine, "Keep  reading.\n").await;
+        engine
+            .translate_ready(Instant::now() + Duration::from_secs(3600))
+            .await;
+        assert_eq!(engine.gate.revision, revision);
+        assert_eq!(
+            caption(),
+            "Continue lendo.",
+            "Same text has no display timeout"
+        );
+
+        read(&mut engine, "").await;
+        engine
+            .translate_ready(Instant::now() + Duration::from_secs(1))
+            .await;
+        assert_eq!(
+            caption(),
+            "Continue lendo.",
+            "An empty OCR must not erase the caption immediately"
+        );
+        read(&mut engine, "Keep reading.").await;
+        engine.translate_ready(stable()).await;
+        assert_eq!(caption(), "Continue lendo.");
+
+        read(&mut engine, "Transient noise.").await;
+        assert_eq!(caption(), "Continue lendo.");
+        read(&mut engine, "Keep reading.").await;
+        engine.translate_ready(stable()).await;
+        assert_eq!(caption(), "Continue lendo.");
+
+        read(&mut engine, "Next phrase.").await;
+        assert_eq!(
+            caption(),
+            "Continue lendo.",
+            "Keep the previous caption until the next phrase stabilizes"
+        );
+        engine.translate_ready(stable()).await;
+        assert_eq!(caption(), "Próxima frase.");
+        read(&mut engine, "").await;
+        assert_eq!(caption(), "Próxima frase.");
+        engine
+            .translate_ready(Instant::now() + Duration::from_millis(1600))
+            .await;
+        assert!(
+            caption().is_empty(),
+            "Confirmed disappearance clears the caption"
+        );
+
+        read(&mut engine, "Keep reading.").await;
+        engine.translate_ready(stable()).await;
+        assert_eq!(caption(), "Continue lendo.");
+        let (reply, _) = oneshot::channel();
+        engine.command(Command::Pause(reply)).await;
+        assert!(caption().is_empty(), "Manual pause still hides immediately");
+        assert_eq!(
+            shared.lock().unwrap().snapshot.api_count,
+            0,
+            "Unchanged text must not trigger more API calls"
+        );
     }
 }

@@ -90,3 +90,9 @@ O coletor lê somente `/proc`; ele não grava telas. Para tempos de OCR/API, exe
 - Ambas as prévias GTK foram renderizadas e inspecionadas. A seleção por janela identifica o monitor como destino da legenda e não exige a mesma proporção entre janela e monitor.
 - A instalação local é atualizada; carregar o novo código da extensão requer renovar a sessão do GNOME. A UI detecta a versão antiga e informa essa necessidade antes de iniciar captura por janela.
 - A autorização pelo portal real, o deslocamento/minimização da janela do emulador e a captura de tela cheia precisam ser conferidos em sessão de uso. Os testes de portal simulado e de geometria não comprovam esses comportamentos do compositor real.
+
+## Permanência da legenda — 23/09/2026
+
+- Removida a limpeza imediata da legenda a cada candidato diferente do OCR. Uma leitura vazia passa a exigir 1,5 segundo de estabilidade; a legenda anterior permanece durante falhas pontuais e durante a estabilização de uma nova frase.
+- 12 testes unitários passaram. Um teste adicional do motor foi executado em D-Bus isolado, usando instantes simulados: mesma frase após uma hora sem expirar, diferenças de espaços, vazio/ruído transitórios, retorno ao texto anterior, nova frase estável, desaparecimento confirmado e pausa manual.
+- O teste do motor usou traduções sintéticas em cache e confirmou zero chamadas à API. Compilação release, formatação e Clippy passaram. Nenhuma alteração da extensão do GNOME foi necessária.

@@ -101,6 +101,8 @@ Na primeira instalação, o GNOME pode precisar que você **saia da sessão e en
 
 **Super + Shift + T** pausa/retoma. O menu também permite selecionar outra área, encerrar a captura, habilitar fundo translúcido e reposicionar a legenda. Durante o reposicionamento, a captura pausa: arraste a legenda e solte. O modo termina automaticamente após 15 segundos. Fora desse modo, a legenda deixa os cliques passarem e não recebe foco.
 
+A legenda não tem prazo de expiração enquanto o texto reconhecido continuar o mesmo. Leituras diferentes precisam estabilizar antes de substituir ou ocultar a legenda anterior; leituras vazias ou descartadas por baixa confiança têm tolerância de 1,5 segundo. Pausar, encerrar ou trocar a região ainda oculta a legenda imediatamente.
+
 No modo **Janela do aplicativo**, a captura contém somente a janela autorizada; mover a janela mantém o recorte relativo ao seu conteúdo. A legenda fica inicialmente no rodapé do monitor escolhido e pode ser reposicionada pelo menu. Ela não acompanha a posição da janela e não faz parte do stream capturado.
 
 No modo **Monitor inteiro**, o retângulo permanece fixo na tela: selecione novamente se mover o jogo. A legenda fica fora desse retângulo.
@@ -163,6 +165,7 @@ Testes de integração adicionais, sem tocar na sessão gráfica atual:
 ./scripts/dev.sh cargo build
 ./scripts/dev.sh dbus-run-session -- env AREA_TRANSLATOR_ISOLATED_TEST=1 bash tests/dbus-smoke.sh
 ./scripts/dev.sh dbus-run-session -- env AREA_TRANSLATOR_ISOLATED_TEST=1 python3 tests/portal-smoke.py
+./scripts/dev.sh dbus-run-session -- env AREA_TRANSLATOR_ISOLATED_TEST=1 cargo test --lib subtitle_survives -- --ignored
 ./scripts/test-gnome.sh
 xvfb-run -a -s '-screen 0 1200x800x24' bash tests/ui-smoke.sh
 xvfb-run -a -s '-screen 0 1200x800x24' bash tests/ui-smoke.sh window

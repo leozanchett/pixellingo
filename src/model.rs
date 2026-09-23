@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 pub const SCAN_INTERVAL: Duration = Duration::from_millis(200);
 pub const OCR_INTERVAL: Duration = Duration::from_millis(500);
 pub const STABLE_INTERVAL: Duration = Duration::from_millis(500);
+pub const EMPTY_INTERVAL: Duration = Duration::from_millis(1500);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -143,10 +144,15 @@ impl TextGate {
     }
 
     pub fn ready(&self, now: Instant, image_settled: bool) -> bool {
-        !self.text.is_empty()
-            && self
-                .since
-                .is_some_and(|t| now.duration_since(t) >= STABLE_INTERVAL)
+        // Empty/low-confidence reads need a longer grace period so a single
+        // missed frame does not erase a subtitle the user is still reading.
+        let interval = if self.text.is_empty() {
+            EMPTY_INTERVAL
+        } else {
+            STABLE_INTERVAL
+        };
+        self.since
+            .is_some_and(|t| now.duration_since(t) >= interval)
             && (image_settled || self.confirmations >= 2)
     }
 }
@@ -241,6 +247,21 @@ mod tests {
         gate.observe("Use  the\nkey.", now + OCR_INTERVAL);
         assert!(gate.ready(now + OCR_INTERVAL, false));
         assert_eq!(gate.revision, 1);
+    }
+
+    #[test]
+    fn empty_readings_require_a_longer_stable_absence() {
+        let now = Instant::now();
+        let mut gate = TextGate::default();
+        assert!(!gate.ready(now + EMPTY_INTERVAL, true));
+        gate.observe("Keep reading.", now);
+        gate.observe("", now + STABLE_INTERVAL);
+        let cleared_at = now + STABLE_INTERVAL;
+        assert!(!gate.ready(cleared_at + STABLE_INTERVAL, true));
+        assert!(!gate.ready(cleared_at + EMPTY_INTERVAL, false));
+        assert!(gate.ready(cleared_at + EMPTY_INTERVAL, true));
+        gate.observe("", cleared_at + EMPTY_INTERVAL);
+        assert!(gate.ready(cleared_at + EMPTY_INTERVAL, false));
     }
 
     #[test]

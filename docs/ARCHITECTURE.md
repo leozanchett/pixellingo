@@ -54,6 +54,8 @@ A extensão exporta `io.github.areatranslator.Overlay.GetMonitors() → s` no no
 
 Um ator Tokio serializa comandos e estado. Dois threads de runtime servem I/O; um trabalhador nativo mantém o handle Tesseract. O canal de OCR comporta um trabalho, e um slot mantém somente o último recorte relevante enquanto o trabalhador está ocupado. Uma tarefa de rede é cancelada quando o texto muda, na pausa ou na seleção de nova região. Resultados são aceitos somente se geração e revisão ainda correspondem.
 
+A revisão acompanha o candidato atual do OCR, mas a legenda exibida é preservada durante a confirmação de uma mudança. Texto não vazio usa estabilidade de 500 ms; ausência de texto usa 1.500 ms. A confirmação exige imagem estável ou leituras repetidas, sem trabalho de OCR extra quando o recorte está parado. Uma nova frase estável substitui diretamente a legenda se estiver em cache; caso contrário, limpa a anterior enquanto aguarda a API. Leituras idênticas mantêm a legenda por tempo ilimitado. Pausa, parada, troca de região e falhas que interrompem a sessão continuam limpando a legenda imediatamente.
+
 Normalização preserva letras, caixa e pontuação, uniformizando apenas espaços. O cache guarda 2.000 pares para a combinação fixa inglês → PT-BR/NMT. OCR de baixa confiança é considerado vazio, evitando enviar ruído. Requisições têm timeout total de 10 segundos, conexão de 5 segundos e no máximo 4.000 caracteres por texto. A pausa não garante cancelamento da cobrança de uma requisição já recebida pelo Google.
 
 Nenhum endpoint HTTP é exposto. Não há telemetria. A interface D-Bus pertence à sessão do usuário; outros processos da mesma sessão têm a mesma fronteira de confiança do desktop.
