@@ -9,6 +9,7 @@ const xml = `<node><interface name="${name}">
 <method name="GetClicks"><arg type="u" direction="out"/></method>
 <method name="LongSubtitle"/><method name="ShortSubtitle"/>
 <method name="WindowSource"/>
+<method name="Refresh"/><method name="GetRefreshes"><arg type="u" direction="out"/></method>
 <signal name="StatusChanged"><arg type="s"/></signal>
 <signal name="TranslationChanged"><arg type="t"/><arg type="t"/><arg type="s"/></signal>
 </interface></node>`;
@@ -17,6 +18,7 @@ let state = {state: 'running', message: 'Teste sintético', generation: 1, revis
     region: {x: 120, y: 500, width: 1040, height: 140}, monitor: {x: 0, y: 0, width: 1280, height: 720}, frame_size: [1280, 720]};
 let object;
 let clicks = 0;
+let refreshes = 0;
 const setText = text => {
     state.translation = text; state.revision++;
     object.emit_signal('TranslationChanged', new GLib.Variant('(tts)', [state.generation, state.revision, text]));
@@ -29,6 +31,8 @@ object = Gio.DBusExportedObject.wrapJSObject(xml, {
     GetStatus: () => JSON.stringify(state), Stop: () => update('idle'),
     Pause: () => update('paused'), Resume: () => update('running'),
     GetClicks: () => clicks,
+    Refresh: () => { refreshes++; },
+    GetRefreshes: () => refreshes,
     LongSubtitle: () => setText('Esta é uma tradução longa para verificar se a legenda cresce automaticamente e continua fora da área de reconhecimento. '.repeat(7)),
     ShortSubtitle: () => setText('Tradução curta.'),
     WindowSource: () => {

@@ -98,6 +98,10 @@ function settings() {
         await selectArea();
     }, true));
     box.append(actions);
+    box.append(button('Atualizar tradução (Super + Shift + R)', async () => {
+        await service('Refresh');
+        message.label = 'Relendo a área selecionada. Você pode voltar ao jogo.';
+    }));
     box.append(button('Diagnóstico: captura, OCR e tradução', diagnostics));
     box.append(message);
     box.append(new Gtk.Label({label: 'Depois de iniciar, use o ícone “Tradutor de área” na barra superior para pausar, reposicionar a legenda ou encerrar.', wrap: true, xalign: 0}));

@@ -138,7 +138,7 @@ struct TextCandidate {
 impl TextGate {
     pub fn observe(&mut self, text: &str, now: Instant) -> bool {
         let text = normalize(text);
-        if text == self.text {
+        if text == self.text && self.revision > 0 {
             self.pending = None;
             return false;
         }

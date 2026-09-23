@@ -34,6 +34,9 @@ export default class AreaTranslator extends Extension {
             Gio.Subprocess.new(['gjs', '-m', GLib.build_filenamev([GLib.get_user_data_dir(), 'area-translator', 'ui', 'app.js'])], Gio.SubprocessFlags.NONE);
         });
         this._toggle = this._panel.menu.addAction('Pausar / retomar', () => this._togglePause());
+        this._panel.menu.addAction('Atualizar tradução (Super + Shift + R)', () => {
+            if (!this._editing) this._call('Refresh');
+        });
         this._panel.menu.addAction('Reposicionar legenda', () => this._startEditing());
         this._background = new PopupMenu.PopupSwitchMenuItem('Fundo translúcido', this._settings.get_boolean('background'));
         this._background.connect('toggled', (_item, value) => { this._settings.set_boolean('background', value); this._style(); });

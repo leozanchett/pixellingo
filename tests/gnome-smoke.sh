@@ -33,6 +33,9 @@ mock_pid=$!
 gdbus call --session --dest org.gnome.Shell --object-path /io/github/areatranslator/Test \
     --method io.github.areatranslator.Test.HideOverview
 sleep 2
+gjs -m ui/refresh.js
+refreshes=$(gdbus call --session --dest io.github.areatranslator.Service --object-path /io/github/areatranslator/Service --method io.github.areatranslator.Service.GetRefreshes)
+test "$refreshes" = '(uint32 1,)'
 gdbus call --session --dest org.gnome.Shell --object-path /io/github/areatranslator/Test \
     --method io.github.areatranslator.Test.Inspect >.deps/overlay-state.txt
 python3 - <<'PY'

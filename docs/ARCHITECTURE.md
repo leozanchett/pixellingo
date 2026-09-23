@@ -31,6 +31,7 @@ Durante a seleção existe somente uma prévia RGB congelada. `GetPreview` a cod
 | `SetRegion` | `ss` | JSON de `Rect` e `Monitor`; valida e inicia o processamento. |
 | `Pause` | — | Invalida trabalhos e pausa captura/rede. |
 | `Resume` | — | Reinicia leitura da área existente e libera bloqueio de API após ação manual. |
+| `Refresh` | — | Requer região ativa; invalida resultados antigos e força nova confirmação OCR, mantendo captura, modelo e cache. Não retoma pausa/bloqueio. |
 | `Stop` | — | Idempotente; fecha captura e limpa legenda. |
 
 `Rect = {x: u32, y: u32, width: u32, height: u32}`.
@@ -74,3 +75,9 @@ Recortes com mais de 400 pixels de altura usam Tesseract PSM 11 (texto esparso),
 `GetCropPreview() → ay` fornece PNG em escala de cinza do próximo recorte. Há no máximo uma solicitação pendente, com espera de três segundos. Somente essa solicitação copia os pixels do recorte; não há prévia contínua, gravação em disco ou chamada à API. Uma captura pausada é rejeitada. A UI só solicita a imagem quando o usuário clica no botão de diagnóstico.
 
 Referência do formato TSV: [documentação do Tesseract](https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html#tsv-output).
+
+## Atualização manual
+
+O instalador registra `Super + Shift + R` como atalho personalizado do GNOME, preservando os demais atalhos e uma combinação alterada pelo usuário em reinstalações. O cliente GJS efêmero chama `Refresh` com `NO_AUTO_START`: não abre GTK, toma foco nem inicia o serviço quando ele estiver parado. A desinstalação remove somente a entrada própria.
+
+O refresh incrementa a geração e cancela a requisição em andamento; mantém o recorte mais recente para repetir OCR mesmo quando o compositor não envia novos quadros. Se o único recorte estiver no trabalhador, recupera apenas seus pixels e descarta o texto antigo. Repetições do atalho durante a confirmação são agrupadas. A confirmação de três leituras e a espera progressiva de rede continuam em vigor.

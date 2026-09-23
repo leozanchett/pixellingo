@@ -123,6 +123,9 @@ impl Service {
     async fn resume(&self) -> zbus::fdo::Result<()> {
         self.request(Command::Resume).await
     }
+    async fn refresh(&self) -> zbus::fdo::Result<()> {
+        self.request(Command::Refresh).await
+    }
     async fn stop(&self) -> zbus::fdo::Result<()> {
         self.request(Command::Stop).await
     }

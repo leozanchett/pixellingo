@@ -121,3 +121,13 @@ O coletor lê somente `/proc`; ele não grava telas. Para tempos de OCR/API, exe
 - Passaram 17 testes unitários e três testes de integração em D-Bus isolado. O teste nativo do motor confirmou diálogo estático e desaparecimento mesmo sem novos quadros: três OCRs em cada caso e nenhum OCR adicional após confirmação. Outro teste confirmou que ruído não aborta a tradução em andamento.
 - Formatação, Clippy, compilação release, verificação das dependências e ciclo D-Bus passaram. Serviço e interface foram atualizados na instalação local; a extensão do GNOME não mudou.
 - A confirmação exige consistência do OCR: uma leitura incorreta repetida três vezes ainda pode ser aceita, e texto persistentemente instável permanece pendente. A validação com o emulador real após esta mudança e a medição de desempenho de 15 minutos continuam pendentes.
+
+
+## Atalho de atualização manual — 2026-09-23
+
+- Adicionado `Refresh` no D-Bus, botão GTK, item no menu e atalho global padrão **Super + Shift + R**. Limpa a legenda e reconfirma o recorte, preservando região, captura e cache. Não retoma pausa ou bloqueio.
+- Passaram 17 testes unitários e cinco testes do motor em D-Bus isolado. Os novos casos verificam rejeição sem região/em pausa, cancelamento de tradução antiga, descarte de OCR antigo, preservação do recorte mais recente, agrupamento de repetições da tecla, recuperação dos pixels quando o trabalhador está ocupado e confirmação de vazio. A reutilização do cache não disparou chamadas à API.
+- O cliente do atalho foi executado contra um serviço simulado no GNOME 46 isolado: exatamente uma chamada a `Refresh`, foco mantido na aplicação sintética em tela cheia e passagem de cliques preservada. O teste D-Bus confirmou também que executar o cliente sem serviço não o inicia.
+- O teste de registro/atualização/remoção do atalho usou GSettings em memória e confirmou a preservação de outros atalhos e da combinação personalizada. Instalador validado com prefixo contendo espaço; launcher, dependências e arquivo desktop passaram nas verificações.
+- Formatação, Clippy e compilação release passaram. Serviço, interface, extensão e cliente foram instalados localmente; o registro real do atalho e os arquivos instalados foram conferidos. A nova opção do menu será carregada pelo GNOME no próximo login.
+- Não houve teste de pressão física do atalho durante captura real do emulador nem medição adicional de desempenho. Estes testes não demonstram correção de toda leitura instável do OCR.

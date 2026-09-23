@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${AREA_TRANSLATOR_ISOLATED_TEST:-}" == 1 ]] || { echo 'Requires an isolated D-Bus session.' >&2; exit 1; }
+gjs -m ui/refresh.js
+owner=$(gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner io.github.areatranslator.Service)
+test "$owner" = '(false,)'
 "${AREA_TRANSLATOR_BINARY:-target/debug/area-translator}" >.deps/service-smoke.log 2>&1 &
 service_pid=$!
 trap 'kill -INT "$service_pid" 2>/dev/null || true' EXIT
@@ -25,6 +28,7 @@ for attempt in range(30):
 assert result is not None and result.returncode == 0, 'Test service did not start'
 state = json.loads(ast.literal_eval(result.stdout)[0])
 assert state['state'] == 'idle', state
+assert call('Refresh').returncode != 0, 'Refresh requires an active region'
 assert call('GetCropPreview').returncode != 0, 'Crop preview requires an active capture'
 assert call('BeginSelection').returncode != 0, 'Capture must require configuration'
 assert call('BeginWindowSelection').returncode != 0, 'Window capture must also require configuration'

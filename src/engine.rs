@@ -21,6 +21,7 @@ pub enum Command {
     Region(Rect, Monitor, Reply),
     Pause(Reply),
     Resume(Reply),
+    Refresh(Reply),
     Stop(Reply),
     Credential(String, Reply),
 }
@@ -70,6 +71,7 @@ pub struct Engine {
     failures: u32,
     retry_at: Instant,
     selection_started: Instant,
+    refreshing: bool,
 }
 
 impl Engine {
@@ -133,6 +135,7 @@ impl Engine {
             failures: 0,
             retry_at: Instant::now(),
             selection_started: Instant::now(),
+            refreshing: false,
         })
     }
 
@@ -184,6 +187,7 @@ impl Engine {
     }
 
     fn invalidate(&mut self) {
+        self.refreshing = false;
         self.generation += 1;
         self.gate = TextGate::default();
         self.shown = None;
@@ -301,6 +305,10 @@ impl Engine {
                 self.status("idle", "Captura encerrada.").await;
                 let _ = reply.send(Ok(()));
             }
+            Command::Refresh(reply) => {
+                let result = self.refresh().await;
+                let _ = reply.send(result.map_err(|error| error.to_string()));
+            }
             Command::Credential(key, reply) => {
                 self.key = key;
                 self.failures = 0;
@@ -308,6 +316,41 @@ impl Engine {
                 let _ = reply.send(Ok(()));
             }
         }
+    }
+
+    async fn refresh(&mut self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.shared.lock().unwrap().snapshot.region.is_some(),
+            "Selecione uma área primeiro."
+        );
+        anyhow::ensure!(self.running, "Retome a tradução antes de atualizar.");
+        // Coalesce keyboard repeats while the same refresh is being confirmed.
+        if self.refreshing {
+            return Ok(());
+        }
+        let captured = self
+            .capture
+            .as_ref()
+            .and_then(|capture| capture.slot.lock().unwrap().frame.take());
+        let frame = [captured, self.latest.take(), self.confirmation_frame.take()]
+            .into_iter()
+            .flatten()
+            .max_by_key(|frame| frame.captured);
+        // Keep the portal session, region, OCR model and translation cache.
+        // Generation rejects results already in flight before the refresh.
+        self.invalidate();
+        self.latest = frame;
+        self.dirty = self.latest.is_some();
+        self.last_ocr = Instant::now() - OCR_INTERVAL;
+        self.refreshing = true;
+        self.show("").await;
+        self.status(
+            "running",
+            "Atualizando tradução: confirmando a leitura da área.",
+        )
+        .await;
+        tracing::info!(generation = self.generation, "refresh_requested");
+        Ok(())
     }
 
     async fn select_region(&mut self, region: Rect, monitor: Monitor) -> anyhow::Result<()> {
@@ -464,6 +507,17 @@ impl Engine {
     async fn ocr_result_at(&mut self, result: OcrResult, now: Instant) {
         self.ocr_busy = false;
         if result.generation != self.generation || !self.running {
+            // A static stream may have its only crop in the OCR worker when
+            // Refresh arrives. Recover those pixels, but never its old text.
+            if self.running
+                && self.refreshing
+                && result.generation.checked_add(1) == Some(self.generation)
+                && self.latest.is_none()
+                && self.confirmation_frame.is_none()
+            {
+                self.latest = result.frame;
+                self.dirty = self.latest.is_some();
+            }
             return;
         }
         if let Some(frame) = result.frame
@@ -510,6 +564,13 @@ impl Engine {
                     self.dirty = false;
                 }
                 self.translate_ready(now).await;
+                if promoted && self.refreshing {
+                    self.refreshing = false;
+                    if self.running {
+                        self.status("running", "Observando a área selecionada.")
+                            .await;
+                    }
+                }
             }
             Err(error) => {
                 self.stop().await;
@@ -706,6 +767,139 @@ mod tests {
         .await
         .unwrap();
         engine.finish_network().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "run with AREA_TRANSLATOR_ISOLATED_TEST=1 under dbus-run-session"]
+    async fn refresh_preserves_region_and_cache_but_rejects_old_results() {
+        let mut engine = test_engine().await;
+        assert!(engine.refresh().await.is_err());
+        let region = Rect {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 80,
+        };
+        engine.shared.lock().unwrap().snapshot.region = Some(region);
+        engine.running = false;
+        assert!(engine.refresh().await.is_err());
+        assert!(!engine.running);
+        engine.running = true;
+        engine
+            .cache
+            .put("Keep reading.".into(), "Continue lendo.".into());
+        let now = Instant::now();
+        confirm(&mut engine, "Keep reading.", now).await;
+        let generation = engine.generation;
+        let old_frame = || Frame {
+            width: 16,
+            height: 16,
+            gray: vec![255; 256],
+            captured: now,
+        };
+        engine.confirmation_frame = Some(old_frame());
+        engine.latest = Some(Frame {
+            captured: now + Duration::from_millis(1),
+            ..old_frame()
+        });
+        let (reply, response) = oneshot::channel();
+        engine.network = Some(tokio::spawn(async move { response.await.unwrap() }));
+        engine.refresh().await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(reply.is_closed());
+        assert!(engine.network.is_none());
+        assert_eq!(engine.generation, generation + 1);
+        assert_eq!(engine.shared.lock().unwrap().snapshot.region, Some(region));
+        assert!(
+            engine
+                .shared
+                .lock()
+                .unwrap()
+                .snapshot
+                .translation
+                .is_empty()
+        );
+        assert_eq!(
+            engine.latest.as_ref().unwrap().captured,
+            now + Duration::from_millis(1)
+        );
+        engine.refresh().await.unwrap();
+        assert_eq!(engine.generation, generation + 1, "key repeats coalesce");
+        engine
+            .ocr_result_at(
+                OcrResult {
+                    generation,
+                    sequence: engine.sequence,
+                    captured: now,
+                    frame: Some(old_frame()),
+                    result: Ok(OcrOutput {
+                        text: "Stale text".into(),
+                        confidence: 95,
+                        elapsed_ms: 1,
+                    }),
+                },
+                now,
+            )
+            .await;
+        assert!(engine.gate.text.is_empty());
+        assert_eq!(
+            engine.latest.as_ref().unwrap().captured,
+            now + Duration::from_millis(1)
+        );
+        confirm(&mut engine, "Keep reading.", now + Duration::from_secs(2)).await;
+        assert_eq!(
+            engine.shared.lock().unwrap().snapshot.translation,
+            "Continue lendo."
+        );
+        assert_eq!(engine.shared.lock().unwrap().snapshot.api_count, 0);
+        assert!(!engine.refreshing);
+        engine.stop().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "run with AREA_TRANSLATOR_ISOLATED_TEST=1 under dbus-run-session"]
+    async fn refresh_recovers_crop_from_busy_worker_and_confirms_empty() {
+        let mut engine = test_engine().await;
+        engine.shared.lock().unwrap().snapshot.region = Some(Rect {
+            width: 16,
+            height: 16,
+            ..Rect::default()
+        });
+        let generation = engine.generation;
+        let now = Instant::now();
+        engine.ocr_busy = true;
+        engine.refresh().await.unwrap();
+        assert!(engine.latest.is_none());
+        engine
+            .ocr_result_at(
+                OcrResult {
+                    generation,
+                    sequence: engine.sequence,
+                    captured: now,
+                    frame: Some(Frame {
+                        width: 16,
+                        height: 16,
+                        gray: vec![255; 256],
+                        captured: now,
+                    }),
+                    result: Ok(OcrOutput {
+                        text: "Discard this old reading".into(),
+                        confidence: 95,
+                        elapsed_ms: 1,
+                    }),
+                },
+                now,
+            )
+            .await;
+        assert!(engine.latest.is_some() && engine.dirty);
+        assert!(engine.gate.text.is_empty());
+        for i in 0..3 {
+            read(&mut engine, "", now + Duration::from_millis(750) * i).await;
+        }
+        assert!(engine.gate.ready());
+        assert!(!engine.refreshing);
+        assert_eq!(engine.shared.lock().unwrap().snapshot.api_count, 0);
+        engine.stop().await;
     }
 
     #[tokio::test]

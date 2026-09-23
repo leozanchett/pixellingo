@@ -32,7 +32,7 @@ Seleciona uma região de uma janela ou monitor, reconhece o texto em inglês loc
 | Entrada | Preserva o foco e permite passagem de cliques durante o uso |
 | OCR | Tesseract local com modelo inglês `tessdata_fast` |
 | Tradução | Google Cloud Translation Basic/NMT; requer internet e credencial própria |
-| Controles | Menu no painel do GNOME e atalho de pausa/retomada |
+| Controles | Menu no painel do GNOME, pausa/retomada e atualização manual |
 
 Outras versões do GNOME, KDE, X11, Windows e macOS não foram validadas. Não há tradução offline nem seleção de várias regiões simultâneas. No modo janela, o recorte acompanha seu deslocamento; a legenda permanece no monitor escolhido.
 
@@ -98,6 +98,10 @@ Na primeira instalação, o GNOME pode precisar que você **saia da sessão e en
 3. Em **O que capturar?**, escolha **Janela do aplicativo** (padrão) ou **Monitor inteiro**. Clique em **Selecionar área** e autorize a janela do emulador ou o monitor no diálogo do Ubuntu.
 4. Marque a caixa de texto na prévia. No modo janela, escolha **Onde exibir a legenda**; no modo monitor, confirme o monitor compartilhado e deixe pelo menos 110 pixels lógicos livres acima ou abaixo do recorte.
 5. Clique em **Iniciar tradução**. A janela de configuração fecha; o controle fica no ícone de dicionário da barra superior.
+
+**Super + Shift + R** atualiza a tradução: limpa a legenda atual e força uma nova leitura da mesma região, sem reabrir o compartilhamento. A leitura ainda precisa ser confirmada três vezes; traduções conhecidas são reutilizadas do cache. Funciona somente com a tradução ativa e não retoma uma captura pausada ou bloqueada. Também há o botão **Atualizar tradução** na configuração e no menu da extensão.
+
+O instalador registra o refresh nos atalhos personalizados do Ubuntu; ele funciona na sessão atual. Em uma atualização, o novo item do menu aparece quando o GNOME carregar novamente a extensão, normalmente no próximo login. Para mudar a combinação, use Configurações → Teclado → Atalhos personalizados → **PixelLingo — Atualizar tradução**. Pelo terminal: `~/.local/bin/area-translator-refresh`.
 
 **Super + Shift + T** pausa/retoma. O menu também permite selecionar outra área, encerrar a captura, habilitar fundo translúcido e reposicionar a legenda. Durante o reposicionamento, a captura pausa: arraste a legenda e solte. O modo termina automaticamente após 15 segundos. Fora desse modo, a legenda deixa os cliques passarem e não recebe foco.
 
