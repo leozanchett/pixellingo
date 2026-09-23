@@ -149,6 +149,7 @@ function diagnostics() {
             capture.label = !s.region ? 'Sem área ativa. Volte e selecione a caixa de diálogo.'
                 : `${s.source_type === 'window' ? 'Janela' : 'Monitor'}: ${s.region.width} × ${s.region.height} px; ${s.captured_frames ?? '—'} quadros recebidos nesta sessão; último quadro há ${s.last_frame_age_ms ?? '—'} ms.`;
             ocr.label = `${s.ocr_count ?? 0} leituras; confiança da última: ${s.ocr_confidence ?? '—'}/100; tempo: ${s.ocr_ms ?? 0} ms.`;
+            if (s.ocr_confirmations) ocr.label += ` Confirmando mudança: ${Math.min(s.ocr_confirmations, 3)}/3 leituras; aguardando estabilidade.`;
             source.label = s.ocr_text || (s.ocr_confidence == null ? 'Nenhuma leitura nesta sessão.'
                 : 'Nenhum texto legível encontrado. Confira se a frase aparece inteira na imagem do recorte.');
             network.label = `${s.api_count ?? 0} tentativas; ${s.api_successes ?? '—'} concluídas; ${s.cache_hits ?? 0} usos do cache; API: ${s.api_ms ?? 0} ms.${s.api_pending ? ' Aguardando resposta do Google…' : ''}`;

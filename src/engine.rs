@@ -60,7 +60,6 @@ pub struct Engine {
     dirty: bool,
     ocr_busy: bool,
     last_ocr: Instant,
-    last_image_change: Instant,
     text_captured: Instant,
     ocr_tx: sync::SyncSender<OcrJob>,
     ocr_rx: mpsc::Receiver<OcrResult>,
@@ -124,7 +123,6 @@ impl Engine {
             dirty: false,
             ocr_busy: false,
             last_ocr: Instant::now() - OCR_INTERVAL,
-            last_image_change: Instant::now(),
             text_captured: Instant::now(),
             ocr_tx,
             ocr_rx,
@@ -199,6 +197,7 @@ impl Engine {
             shared.snapshot.captured_frames = 0;
             shared.snapshot.ocr_text.clear();
             shared.snapshot.ocr_confidence = None;
+            shared.snapshot.ocr_confirmations = 0;
             shared.snapshot.api_pending = false;
         }
         if let Some(task) = self.network.take() {
@@ -409,18 +408,21 @@ impl Engine {
             if changed(&self.fingerprint, &fingerprint) {
                 self.fingerprint = fingerprint;
                 self.sequence += 1;
-                self.last_image_change = Instant::now();
                 self.dirty = true;
                 self.latest = Some(frame);
+            } else if self.dirty {
+                self.latest = Some(frame);
+            } else {
+                // Confirm against the freshest pixels, even when the change
+                // detector found no significant difference in this frame.
+                self.confirmation_frame = Some(frame);
             }
         }
-        // Confirm empty reads and near-matches once, even if the compositor
-        // sends no more frames. Near-matches can be real small wording changes.
+        // A candidate always needs repeated OCR. Reuse the retained crop only
+        // when no newer pixels are available; stop confirming once accepted.
         if !self.dirty
             && !self.ocr_busy
             && self.gate.needs_confirmation(Instant::now())
-            && (!self.gate.text.is_empty()
-                || !self.shared.lock().unwrap().snapshot.translation.is_empty())
             && let Some(frame) = self.confirmation_frame.take()
         {
             self.latest = Some(frame);
@@ -456,26 +458,45 @@ impl Engine {
     }
 
     async fn ocr_result(&mut self, result: OcrResult) {
+        self.ocr_result_at(result, Instant::now()).await;
+    }
+
+    async fn ocr_result_at(&mut self, result: OcrResult, now: Instant) {
         self.ocr_busy = false;
         if result.generation != self.generation || !self.running {
             return;
         }
-        self.confirmation_frame = result.frame;
+        if let Some(frame) = result.frame
+            && self
+                .confirmation_frame
+                .as_ref()
+                .is_none_or(|old| old.captured < frame.captured)
+        {
+            self.confirmation_frame = Some(frame);
+        }
         match result.result {
             Ok(output) => {
+                let promoted = self.gate.observe(&output.text, now);
                 {
                     let mut shared = self.shared.lock().unwrap();
                     shared.snapshot.ocr_count += 1;
                     shared.snapshot.ocr_ms = output.elapsed_ms;
                     shared.snapshot.ocr_text = output.text.clone();
                     shared.snapshot.ocr_confidence = Some(output.confidence);
+                    shared.snapshot.ocr_confirmations =
+                        self.gate.pending_confirmations().unwrap_or(0);
                 }
                 tracing::info!(
                     ocr_ms = output.elapsed_ms,
                     confidence = output.confidence,
+                    generation = self.generation,
+                    revision = self.gate.revision,
+                    characters = output.text.chars().count(),
+                    pending_confirmations = self.gate.pending_confirmations().unwrap_or(0),
+                    confirmed_change = promoted,
                     "ocr"
                 );
-                if self.gate.observe(&output.text, Instant::now()) {
+                if promoted {
                     self.text_captured = result.captured;
                     self.shown = None;
                     if let Some(task) = self.network.take() {
@@ -488,7 +509,7 @@ impl Engine {
                 if result.sequence == self.sequence {
                     self.dirty = false;
                 }
-                self.translate_ready(Instant::now()).await;
+                self.translate_ready(now).await;
             }
             Err(error) => {
                 self.stop().await;
@@ -503,10 +524,7 @@ impl Engine {
             || self.network.is_some()
             || self.dirty
             || self.ocr_busy
-            || !self.gate.ready(
-                now,
-                now.duration_since(self.last_image_change) >= crate::model::STABLE_INTERVAL,
-            )
+            || !self.gate.ready()
         {
             return;
         }
@@ -562,6 +580,7 @@ impl Engine {
                 result,
             }
         }));
+        tracing::info!(generation, revision, "translation_requested");
     }
 
     async fn finish_network(&mut self) {
@@ -594,7 +613,7 @@ impl Engine {
                     latency_ms = self.text_captured.elapsed().as_millis() as u64,
                     "translation"
                 );
-                if !self.dirty && !self.ocr_busy {
+                if !self.dirty && !self.ocr_busy && self.gate.ready() {
                     self.shown = Some(self.gate.revision);
                     self.show(&text).await;
                 }
@@ -638,239 +657,290 @@ mod tests {
         assert!(!is_current(2, 5, 2, 4));
     }
 
-    #[tokio::test]
-    #[ignore = "run with AREA_TRANSLATOR_ISOLATED_TEST=1 under dbus-run-session"]
-    async fn subtitle_survives_same_text_and_transient_ocr_until_a_confirmed_change() {
+    async fn test_engine() -> Engine {
         assert_eq!(
             std::env::var("AREA_TRANSLATOR_ISOLATED_TEST").as_deref(),
             Ok("1")
         );
         let shared = std::sync::Arc::new(std::sync::Mutex::new(crate::service::Shared::default()));
-        let connection = zbus::Connection::session().await.unwrap();
-        let mut engine = Engine::new(shared.clone(), connection).unwrap();
+        let mut engine = Engine::new(shared, zbus::Connection::session().await.unwrap()).unwrap();
         engine.running = true;
         engine
-            .cache
-            .put("Keep reading.".into(), "Continue lendo.".into());
-        engine
-            .cache
-            .put("Next phrase.".into(), "Próxima frase.".into());
+    }
 
-        async fn read(engine: &mut Engine, text: &str) {
-            engine
-                .ocr_result(OcrResult {
+    async fn read(engine: &mut Engine, text: &str, now: Instant) {
+        engine
+            .ocr_result_at(
+                OcrResult {
                     generation: engine.generation,
                     sequence: engine.sequence,
-                    captured: Instant::now(),
+                    captured: now,
                     frame: None,
                     result: Ok(OcrOutput {
                         text: text.into(),
-                        confidence: if text.is_empty() { 0 } else { 95 },
+                        confidence: 95,
                         elapsed_ms: 1,
                     }),
-                })
-                .await;
-        }
-        let caption = || shared.lock().unwrap().snapshot.translation.clone();
-        let stable = || Instant::now() + Duration::from_millis(600);
-
-        read(&mut engine, "Keep reading.").await;
-        engine.translate_ready(stable()).await;
-        assert_eq!(caption(), "Continue lendo.");
-        let revision = engine.gate.revision;
-        read(&mut engine, "Keep  reading.\n").await;
-        engine
-            .translate_ready(Instant::now() + Duration::from_secs(3600))
+                },
+                now,
+            )
             .await;
-        assert_eq!(engine.gate.revision, revision);
-        assert_eq!(
-            caption(),
-            "Continue lendo.",
-            "Same text has no display timeout"
-        );
-
-        read(&mut engine, "").await;
-        engine
-            .translate_ready(Instant::now() + Duration::from_secs(1))
-            .await;
-        assert_eq!(
-            caption(),
-            "Continue lendo.",
-            "An empty OCR must not erase the caption immediately"
-        );
-        read(&mut engine, "Keep reading.").await;
-        engine.translate_ready(stable()).await;
-        assert_eq!(caption(), "Continue lendo.");
-
-        read(&mut engine, "Transient noise.").await;
-        assert_eq!(caption(), "Continue lendo.");
-        read(&mut engine, "Keep reading.").await;
-        engine.translate_ready(stable()).await;
-        assert_eq!(caption(), "Continue lendo.");
-
-        read(&mut engine, "Next phrase.").await;
-        assert_eq!(
-            caption(),
-            "Continue lendo.",
-            "Keep the previous caption until the next phrase stabilizes"
-        );
-        engine.translate_ready(stable()).await;
-        assert_eq!(caption(), "Próxima frase.");
-        read(&mut engine, "").await;
-        assert_eq!(caption(), "Próxima frase.");
-        engine
-            .translate_ready(Instant::now() + Duration::from_millis(1600))
-            .await;
-        assert!(
-            !caption().is_empty(),
-            "One empty read must not clear without confirmation"
-        );
-        read(&mut engine, "").await;
-        engine
-            .translate_ready(Instant::now() + Duration::from_millis(1600))
-            .await;
-        assert!(
-            caption().is_empty(),
-            "Confirmed disappearance clears the caption"
-        );
-
-        read(&mut engine, "Keep reading.").await;
-        engine.translate_ready(stable()).await;
-        assert_eq!(caption(), "Continue lendo.");
-        let (reply, _) = oneshot::channel();
-        engine.command(Command::Pause(reply)).await;
-        assert!(caption().is_empty(), "Manual pause still hides immediately");
-        assert_eq!(
-            shared.lock().unwrap().snapshot.api_count,
-            0,
-            "Unchanged text must not trigger more API calls"
-        );
     }
 
-    #[tokio::test]
-    #[ignore = "requires native OCR; run with AREA_TRANSLATOR_ISOLATED_TEST=1 under dbus-run-session"]
-    async fn empty_confirmation_runs_once_without_new_capture_frames() {
-        assert_eq!(
-            std::env::var("AREA_TRANSLATOR_ISOLATED_TEST").as_deref(),
-            Ok("1")
-        );
-        for name in ["dialog", "blank"] {
-            let shared =
-                std::sync::Arc::new(std::sync::Mutex::new(crate::service::Shared::default()));
-            let mut engine =
-                Engine::new(shared.clone(), zbus::Connection::session().await.unwrap()).unwrap();
-            let expected = std::fs::read_to_string("tests/fixtures/dialog.txt").unwrap();
-            let expected = expected.trim();
-            engine.running = true;
-            engine.cache.put(expected.into(), "Legenda anterior".into());
-            engine
-                .gate
-                .observe(expected, Instant::now() - Duration::from_secs(3));
-            engine
-                .gate
-                .observe("", Instant::now() - Duration::from_secs(2));
-            engine.show("Legenda anterior").await;
-            let decoder = png::Decoder::new(std::io::BufReader::new(
-                std::fs::File::open(format!("tests/fixtures/{name}.png")).unwrap(),
-            ));
-            let mut reader = decoder.read_info().unwrap();
-            let mut gray = vec![0; reader.output_buffer_size().unwrap()];
-            let info = reader.next_frame(&mut gray).unwrap();
-            gray.truncate(info.buffer_size());
-            assert_eq!(info.color_type, png::ColorType::Grayscale);
-            engine.confirmation_frame = Some(Frame {
-                width: info.width,
-                height: info.height,
-                gray,
-                captured: Instant::now(),
-            });
-            engine.tick().await;
-            assert!(
-                engine.ocr_busy,
-                "Confirm even when the compositor sends no frames"
-            );
-            assert_eq!(
-                shared.lock().unwrap().snapshot.translation,
-                "Legenda anterior"
-            );
-            let result = tokio::time::timeout(Duration::from_secs(10), engine.ocr_rx.recv())
-                .await
-                .unwrap()
-                .unwrap();
-            engine.ocr_result(result).await;
-            engine
-                .translate_ready(Instant::now() + Duration::from_secs(1))
-                .await;
-            assert_eq!(
-                shared.lock().unwrap().snapshot.translation.is_empty(),
-                name == "blank"
-            );
-            engine.last_ocr = Instant::now() - OCR_INTERVAL;
-            engine.tick().await;
-            assert!(
-                !engine.ocr_busy,
-                "Do not repeat OCR indefinitely on unchanged frames"
-            );
-            assert_eq!(shared.lock().unwrap().snapshot.ocr_count, 1);
-            assert_eq!(shared.lock().unwrap().snapshot.api_count, 0);
-            engine.stop().await;
-            assert!(engine.confirmation_frame.is_none());
+    async fn confirm(engine: &mut Engine, text: &str, now: Instant) {
+        for i in 0..3 {
+            read(engine, text, now + OCR_INTERVAL * i).await;
         }
+    }
+
+    async fn finish(engine: &mut Engine) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while engine
+                .network
+                .as_ref()
+                .is_some_and(|task| !task.is_finished())
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        engine.finish_network().await;
     }
 
     #[tokio::test]
     #[ignore = "run with AREA_TRANSLATOR_ISOLATED_TEST=1 under dbus-run-session"]
-    async fn noisy_ocr_does_not_cancel_a_translation_in_flight() {
+    async fn unstable_short_ocr_cannot_create_translation_requests_or_replace_caption() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut engine = test_engine().await;
+        let count = Arc::new(AtomicUsize::new(0));
+        let server_count = count.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        engine.translator =
+            Translator::with_test_endpoint(format!("http://{}", listener.local_addr().unwrap()));
+        engine.key = "test-only".into();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                loop {
+                    let mut bytes = [0; 2048];
+                    let n = socket.read(&mut bytes).await.unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&bytes[..n]);
+                    let input = String::from_utf8_lossy(&request);
+                    if let Some((headers, body)) = input.split_once("\r\n\r\n") {
+                        let length: usize = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length: ")
+                                    .map(str::to_owned)
+                            })
+                            .unwrap()
+                            .parse()
+                            .unwrap();
+                        if body.len() >= length {
+                            break;
+                        }
+                    }
+                }
+                server_count.fetch_add(1, Ordering::SeqCst);
+                let body = r#"{"data":{"translations":[{"translatedText":"Legenda confirmada"}]}}"#;
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+            }
+        });
+        let now = Instant::now();
+        let variants = [
+            "Are you all rlght?",
+            "Are you all right? 3",
+            "Are you all right!",
+            "Are you all right?",
+            "",
+        ];
+        // The former bug: merely waiting 500 ms after each different read sent it.
+        for (i, text) in variants.iter().enumerate() {
+            let at = now + Duration::from_secs(i as u64 * 2);
+            read(&mut engine, text, at).await;
+            engine.translate_ready(at + Duration::from_secs(1)).await;
+        }
+        assert_eq!(engine.shared.lock().unwrap().snapshot.api_count, 0);
+        let stable_at = now + Duration::from_secs(20);
+        confirm(&mut engine, "Are you all right?", stable_at).await;
+        finish(&mut engine).await;
+        assert_eq!(count.load(Ordering::SeqCst), 1);
         assert_eq!(
-            std::env::var("AREA_TRANSLATOR_ISOLATED_TEST").as_deref(),
-            Ok("1")
+            engine.shared.lock().unwrap().snapshot.translation,
+            "Legenda confirmada"
         );
-        let phrase = "There is no saved game on the memory card. Would you like to create a new file? Yes No";
-        let shared = std::sync::Arc::new(std::sync::Mutex::new(crate::service::Shared::default()));
-        let mut engine =
-            Engine::new(shared.clone(), zbus::Connection::session().await.unwrap()).unwrap();
-        engine.running = true;
-        engine
-            .gate
-            .observe(phrase, Instant::now() - Duration::from_secs(1));
+        let revision = engine.gate.revision;
+        for (i, text) in variants.iter().cycle().take(20).enumerate() {
+            let at = stable_at + Duration::from_secs(3 + i as u64 * 3);
+            read(&mut engine, text, at).await;
+            read(&mut engine, text, at + OCR_INTERVAL).await;
+            engine.translate_ready(at + Duration::from_secs(2)).await;
+            assert_eq!(engine.gate.revision, revision);
+            assert_eq!(
+                engine.shared.lock().unwrap().snapshot.translation,
+                "Legenda confirmada"
+            );
+            assert_eq!(engine.shared.lock().unwrap().snapshot.api_count, 1);
+        }
+        let next_at = now + Duration::from_secs(100);
+        confirm(&mut engine, "Spend 11 coins.", next_at).await;
+        finish(&mut engine).await;
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+        confirm(
+            &mut engine,
+            "Are you all right?",
+            next_at + Duration::from_secs(3),
+        )
+        .await;
+        assert_eq!(engine.shared.lock().unwrap().snapshot.api_count, 2);
+        assert_eq!(engine.shared.lock().unwrap().snapshot.cache_hits, 1);
+        let empty_at = next_at + Duration::from_secs(6);
+        for i in 0..3 {
+            read(&mut engine, "", empty_at + Duration::from_millis(750) * i).await;
+        }
+        assert!(
+            engine
+                .shared
+                .lock()
+                .unwrap()
+                .snapshot
+                .translation
+                .is_empty()
+        );
+        confirm(
+            &mut engine,
+            "Are you all right?",
+            next_at + Duration::from_secs(10),
+        )
+        .await;
+        let (reply, _) = oneshot::channel();
+        engine.command(Command::Pause(reply)).await;
+        assert!(
+            engine
+                .shared
+                .lock()
+                .unwrap()
+                .snapshot
+                .translation
+                .is_empty()
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+        engine.stop().await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "run with AREA_TRANSLATOR_ISOLATED_TEST=1 under dbus-run-session"]
+    async fn unconfirmed_noise_does_not_cancel_in_flight_translation() {
+        let mut engine = test_engine().await;
+        let now = Instant::now() - Duration::from_secs(2);
+        for i in 0..3 {
+            engine.gate.observe("Keep reading.", now + OCR_INTERVAL * i);
+        }
         let revision = engine.gate.revision;
         let generation = engine.generation;
         let (reply, response) = oneshot::channel();
         engine.network = Some(tokio::spawn(async move { response.await.unwrap() }));
-        for noise in ["l", "r", "I", "v"] {
-            engine
-                .ocr_result(OcrResult {
-                    generation,
-                    sequence: engine.sequence,
-                    captured: Instant::now(),
-                    frame: None,
-                    result: Ok(OcrOutput {
-                        text: format!("{noise} {phrase} |"),
-                        confidence: 88,
-                        elapsed_ms: 50,
-                    }),
-                })
-                .await;
-            assert!(
-                engine.network.is_some(),
-                "Small OCR variations must not abort the pending translation"
-            );
+        for text in ["Keep readlng.", "Keep reading. 3", ""] {
+            read(&mut engine, text, Instant::now()).await;
+            assert!(engine.network.is_some());
             assert_eq!(engine.gate.revision, revision);
         }
         reply
             .send(NetworkResult {
                 generation,
                 revision,
-                source: phrase.into(),
+                source: "Keep reading.".into(),
                 elapsed: 350,
-                result: Ok("Não há jogo salvo. Deseja criar um novo arquivo?".into()),
+                result: Ok("Continue lendo.".into()),
             })
             .ok()
             .unwrap();
-        tokio::task::yield_now().await;
-        engine.finish_network().await;
-        assert!(!shared.lock().unwrap().snapshot.translation.is_empty());
-        assert_eq!(shared.lock().unwrap().snapshot.api_successes, 1);
+        finish(&mut engine).await;
+        read(&mut engine, "Keep reading.", Instant::now()).await;
+        assert_eq!(
+            engine.shared.lock().unwrap().snapshot.translation,
+            "Continue lendo."
+        );
+        assert_eq!(engine.shared.lock().unwrap().snapshot.api_successes, 1);
         engine.stop().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires native OCR; run with AREA_TRANSLATOR_ISOLATED_TEST=1 under dbus-run-session"]
+    async fn static_image_is_confirmed_then_ocr_stops_without_new_capture_frames() {
+        for name in ["dialog", "blank"] {
+            let mut engine = test_engine().await;
+            let expected = std::fs::read_to_string("tests/fixtures/dialog.txt").unwrap();
+            let expected = expected.trim();
+            engine
+                .cache
+                .put(expected.into(), "Legenda confirmada".into());
+            if name == "blank" {
+                let at = Instant::now() - Duration::from_secs(2);
+                for i in 0..3 {
+                    engine.gate.observe(expected, at + OCR_INTERVAL * i);
+                }
+                engine.show("Legenda confirmada").await;
+            }
+            let mut reader = png::Decoder::new(std::io::BufReader::new(
+                std::fs::File::open(format!("tests/fixtures/{name}.png")).unwrap(),
+            ))
+            .read_info()
+            .unwrap();
+            let mut gray = vec![0; reader.output_buffer_size().unwrap()];
+            let info = reader.next_frame(&mut gray).unwrap();
+            gray.truncate(info.buffer_size());
+            engine.latest = Some(Frame {
+                width: info.width,
+                height: info.height,
+                gray,
+                captured: Instant::now(),
+            });
+            engine.dirty = true;
+            for i in 0..3 {
+                if i > 0 {
+                    tokio::time::sleep(if name == "blank" {
+                        Duration::from_millis(760)
+                    } else {
+                        Duration::from_millis(510)
+                    })
+                    .await;
+                }
+                engine.tick().await;
+                assert!(engine.ocr_busy);
+                let result = tokio::time::timeout(Duration::from_secs(10), engine.ocr_rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                engine.ocr_result(result).await;
+            }
+            assert!(engine.gate.ready());
+            assert_eq!(
+                engine
+                    .shared
+                    .lock()
+                    .unwrap()
+                    .snapshot
+                    .translation
+                    .is_empty(),
+                name == "blank"
+            );
+            engine.last_ocr = Instant::now() - OCR_INTERVAL;
+            engine.tick().await;
+            assert!(!engine.ocr_busy);
+            assert_eq!(engine.shared.lock().unwrap().snapshot.ocr_count, 3);
+            assert_eq!(engine.shared.lock().unwrap().snapshot.api_count, 0);
+            engine.stop().await;
+            assert!(engine.confirmation_frame.is_none());
+        }
     }
 }

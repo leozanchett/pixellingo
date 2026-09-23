@@ -101,7 +101,7 @@ Na primeira instalação, o GNOME pode precisar que você **saia da sessão e en
 
 **Super + Shift + T** pausa/retoma. O menu também permite selecionar outra área, encerrar a captura, habilitar fundo translúcido e reposicionar a legenda. Durante o reposicionamento, a captura pausa: arraste a legenda e solte. O modo termina automaticamente após 15 segundos. Fora desse modo, a legenda deixa os cliques passarem e não recebe foco.
 
-A legenda não tem prazo de expiração enquanto o texto reconhecido continuar o mesmo. Leituras diferentes precisam estabilizar antes de substituir ou ocultar a legenda anterior; leituras vazias ou descartadas por baixa confiança exigem ao menos duas leituras e 1,5 segundo de estabilidade. Se a imagem ficar parada, o serviço confirma uma vez usando o último recorte em memória. Pequenas variações do OCR em frases longas não reiniciam continuamente a espera pela tradução. Pausar, encerrar ou trocar a região ainda oculta a legenda imediatamente.
+A legenda não tem prazo de expiração enquanto o texto confirmado continuar o mesmo. Uma nova frase só é aceita após três leituras consecutivas iguais, cobrindo pelo menos um segundo; uma ausência de texto exige também três leituras, cobrindo pelo menos 1,5 segundo. Leituras diferentes ou isoladas mantêm a legenda anterior e não disparam tradução. Se a imagem parar, o serviço usa o recorte mais recente em memória para concluir as confirmações e depois para o OCR. Pausar, encerrar ou trocar a região oculta a legenda imediatamente. No diagnóstico, a contagem de confirmação mostra quando uma mudança ainda está em análise.
 
 No modo **Janela do aplicativo**, a captura contém somente a janela autorizada; mover a janela mantém o recorte relativo ao seu conteúdo. A legenda fica inicialmente no rodapé do monitor escolhido e pode ser reposicionada pelo menu. Ela não acompanha a posição da janela e não faz parte do stream capturado.
 
@@ -128,8 +128,8 @@ Se a leitura estiver imprecisa, aumente o tamanho do texto ou a escala de render
 
 - PipeWire fornece a janela ou o monitor autorizado, mas somente o recorte é convertido para escala de cinza e processado. Não há conversão contínua do monitor inteiro.
 - Amostragem limitada a 5 Hz antes do mapeamento dos pixels. Buffer de captura limitado; trabalho antigo não forma uma fila crescente.
-- OCR no máximo duas vezes por segundo, após mudanças relevantes ou uma confirmação pendente de leitura vazia/variante próxima. Modelo Tesseract inglês mantido em um trabalhador com OpenMP limitado a um thread.
-- Estabilidade de texto de 500 ms reduz chamadas durante animação de letras. Fundo animado ainda pode exigir OCR repetido.
+- OCR no máximo duas vezes por segundo, após mudanças relevantes ou uma confirmação pendente de texto. Modelo Tesseract inglês mantido em um trabalhador com OpenMP limitado a um thread.
+- Três leituras iguais por pelo menos um segundo reduzem chamadas durante animação de letras e oscilações do OCR. Fundo animado ainda pode exigir OCR repetido.
 - Cache LRU de 2.000 traduções em memória, compartilhado entre seleções durante a vida do serviço.
 - Apenas uma tradução em andamento. Resultados de seleções, pausas e diálogos antigos são descartados.
 - Ao pausar, o pipeline entra em `Paused`; ao encerrar, a sessão do portal fecha e o modelo é liberado pelo trabalhador.

@@ -35,6 +35,7 @@ pub struct Snapshot {
     pub last_frame_age_ms: Option<u64>,
     pub ocr_text: String,
     pub ocr_confidence: Option<i32>,
+    pub ocr_confirmations: u32,
     pub api_successes: u64,
     pub api_pending: bool,
 }
@@ -64,6 +65,7 @@ impl Default for Snapshot {
             last_frame_age_ms: None,
             ocr_text: String::new(),
             ocr_confidence: None,
+            ocr_confirmations: 0,
             api_successes: 0,
             api_pending: false,
         }

@@ -46,6 +46,13 @@ struct Translation {
 }
 
 impl Translator {
+    #[cfg(test)]
+    pub(crate) fn with_test_endpoint(endpoint: String) -> Self {
+        let mut translator = Self::new().unwrap();
+        translator.endpoint = endpoint;
+        translator
+    }
+
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
             client: reqwest::Client::builder()

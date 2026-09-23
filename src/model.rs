@@ -3,7 +3,8 @@ use std::time::{Duration, Instant};
 
 pub const SCAN_INTERVAL: Duration = Duration::from_millis(200);
 pub const OCR_INTERVAL: Duration = Duration::from_millis(500);
-pub const STABLE_INTERVAL: Duration = Duration::from_millis(500);
+pub const STABLE_INTERVAL: Duration = Duration::from_millis(1000);
+pub const TEXT_CONFIRMATIONS: u32 = 3;
 pub const EMPTY_INTERVAL: Duration = Duration::from_millis(1500);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -118,151 +119,79 @@ pub fn normalize(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Small OCR artifacts must not restart stability forever on animated scenes.
-/// Keep the comparison bounded, anchor it to the representative (no drift), and
-/// do not merge short messages or changes to numbers/negations.
-fn similar_ocr(a: &str, b: &str) -> bool {
-    fn words(text: &str) -> Vec<String> {
-        text.split_whitespace()
-            .map(|w| {
-                w.trim_matches(|c: char| !c.is_alphanumeric())
-                    .to_lowercase()
-                    .replace('’', "'")
-            })
-            .filter(|w| !w.is_empty())
-            .collect()
-    }
-    fn significant(words: &[String]) -> Vec<&str> {
-        words
-            .iter()
-            .filter(|w| {
-                w.chars().any(|c| c.is_numeric())
-                    || matches!(w.as_str(), "no" | "not" | "never" | "without" | "cannot")
-                    || w.ends_with("n't")
-            })
-            .map(String::as_str)
-            .collect()
-    }
-    let aw = words(a);
-    let bw = words(b);
-    if aw.len().min(bw.len()) < 8 || significant(&aw) != significant(&bw) {
-        return false;
-    }
-    let a: Vec<char> = aw.join(" ").chars().collect();
-    let b: Vec<char> = bw.join(" ").chars().collect();
-    let length = a.len().min(b.len());
-    if length < 60 || a.len().max(b.len()) > 4000 {
-        return false;
-    }
-    let limit = (length / 16).min(8);
-    if a.len().abs_diff(b.len()) > limit {
-        return false;
-    }
-    // Banded edit distance: at most 17 cells per source character.
-    let mut previous: Vec<usize> = (0..=b.len()).collect();
-    let mut row = vec![limit + 1; b.len() + 1];
-    for (index, &ch) in a.iter().enumerate() {
-        let i = index + 1;
-        let start = i.saturating_sub(limit).max(1);
-        let end = (i + limit).min(b.len());
-        row[0] = i;
-        if start > 1 {
-            row[start - 1] = limit + 1;
-        }
-        let mut minimum = limit + 1;
-        for j in start..=end {
-            row[j] = (previous[j] + 1)
-                .min(row[j - 1] + 1)
-                .min(previous[j - 1] + usize::from(ch != b[j - 1]));
-            minimum = minimum.min(row[j]);
-        }
-        if end < b.len() {
-            row[end + 1] = limit + 1;
-        }
-        if minimum > limit {
-            return false;
-        }
-        std::mem::swap(&mut previous, &mut row);
-    }
-    previous[b.len()] <= limit
-}
-
-/// Text-based stability tolerates animation behind subtitles. A second OCR
-/// result is needed if the image keeps changing or to confirm empty text.
+/// Only confirmed text owns a revision. Candidates cannot cancel an in-flight
+/// translation or replace its cache key until three consecutive readings agree.
 #[derive(Default)]
 pub struct TextGate {
     pub text: String,
     pub revision: u64,
-    since: Option<Instant>,
+    pending: Option<TextCandidate>,
+}
+
+struct TextCandidate {
+    text: String,
+    since: Instant,
+    last_read: Instant,
     confirmations: u32,
-    variant: Option<(String, Instant)>,
 }
 
 impl TextGate {
     pub fn observe(&mut self, text: &str, now: Instant) -> bool {
         let text = normalize(text);
-        if text != self.text && similar_ocr(&self.text, &text) {
-            self.confirmations = self.confirmations.saturating_add(1);
-            if let Some((variant, since)) = &self.variant
-                && variant == &text
-                && now.duration_since(*since) >= STABLE_INTERVAL
-            {
-                // A persistent near-match may be a real one-word change, not
-                // noise. Adopt it after repeated identical observations.
-                self.since = Some(*since);
-                self.text = text;
-                self.revision += 1;
-                self.variant = None;
-                return true;
-            }
-            if self
-                .variant
-                .as_ref()
-                .is_none_or(|(variant, _)| variant != &text)
-            {
-                self.variant = Some((text, now));
-            }
+        if text == self.text {
+            self.pending = None;
             return false;
         }
-        self.variant = None;
-        if text != self.text {
-            self.text = text;
-            self.revision += 1;
-            self.since = Some(now);
-            self.confirmations = 1;
-            true
-        } else {
-            self.confirmations = self.confirmations.saturating_add(1);
-            false
+        match &mut self.pending {
+            Some(candidate) if candidate.text == text => {
+                candidate.confirmations = candidate.confirmations.saturating_add(1);
+                candidate.last_read = now;
+            }
+            _ => {
+                self.pending = Some(TextCandidate {
+                    text,
+                    since: now,
+                    last_read: now,
+                    confirmations: 1,
+                })
+            }
         }
-    }
-
-    pub fn ready(&self, now: Instant, image_settled: bool) -> bool {
-        // Empty/low-confidence reads need a longer grace period so a single
-        // missed frame does not erase a subtitle the user is still reading.
-        let interval = if self.text.is_empty() {
+        let candidate = self.pending.as_ref().unwrap();
+        let interval = if candidate.text.is_empty() {
             EMPTY_INTERVAL
         } else {
             STABLE_INTERVAL
         };
-        self.since
-            .is_some_and(|t| now.duration_since(t) >= interval)
-            && if self.text.is_empty() {
-                self.confirmations >= 2
-            } else {
-                image_settled || self.confirmations >= 2
-            }
+        if candidate.confirmations < TEXT_CONFIRMATIONS
+            || now.duration_since(candidate.since) < interval
+        {
+            return false;
+        }
+        self.text = self.pending.take().unwrap().text;
+        self.revision += 1;
+        true
+    }
+
+    pub fn ready(&self) -> bool {
+        self.revision > 0 && self.pending.is_none()
+    }
+
+    pub fn pending_confirmations(&self) -> Option<u32> {
+        self.pending
+            .as_ref()
+            .map(|candidate| candidate.confirmations)
     }
 
     pub fn needs_confirmation(&self, now: Instant) -> bool {
-        self.variant
-            .as_ref()
-            .is_some_and(|(_, since)| now.duration_since(*since) >= STABLE_INTERVAL)
-            || (self.text.is_empty()
-                && self.confirmations < 2
-                && self
-                    .since
-                    .is_some_and(|t| now.duration_since(t) >= EMPTY_INTERVAL))
+        self.pending.as_ref().is_some_and(|candidate| {
+            // Empty text uses a longer spacing to cover its 1.5 second grace.
+            let spacing = if candidate.text.is_empty() {
+                EMPTY_INTERVAL / 2
+            } else {
+                OCR_INTERVAL
+            };
+            now.duration_since(candidate.last_read) >= spacing
+        })
     }
 }
 
@@ -333,100 +262,117 @@ mod tests {
         }
     }
 
-    #[test]
-    fn progressive_dialogue_needs_stability_and_preserves_case() {
-        let now = Instant::now();
-        let mut gate = TextGate::default();
-        gate.observe("Hello", now);
-        assert!(!gate.ready(now, true));
-        gate.observe("Hello world!", now + OCR_INTERVAL);
-        assert_eq!(gate.revision, 2);
-        assert!(!gate.ready(now + OCR_INTERVAL, true));
-        assert!(gate.ready(now + OCR_INTERVAL * 2, true));
-        gate.observe("", now + OCR_INTERVAL * 3);
-        assert!(!gate.ready(now + OCR_INTERVAL * 4, true));
+    fn confirm(gate: &mut TextGate, text: &str, at: Instant) {
+        assert!(!gate.observe(text, at));
+        assert!(!gate.observe(text, at + OCR_INTERVAL));
+        assert!(gate.observe(text, at + STABLE_INTERVAL));
     }
 
     #[test]
-    fn animated_background_requires_repeated_text() {
-        let mut gate = TextGate::default();
+    fn one_read_never_becomes_ready_just_because_time_passes() {
         let now = Instant::now();
-        gate.observe("Use the key.", now);
-        assert!(!gate.ready(now + OCR_INTERVAL, false));
-        gate.observe("Use  the\nkey.", now + OCR_INTERVAL);
-        assert!(gate.ready(now + OCR_INTERVAL, false));
-        assert_eq!(gate.revision, 1);
+        let mut gate = TextGate::default();
+        gate.observe("Are you all right?", now);
+        assert!(!gate.ready());
+        assert!(gate.needs_confirmation(now + Duration::from_secs(3600)));
+        assert_eq!(gate.revision, 0);
+        gate.observe("Are you all right?", now + OCR_INTERVAL);
+        assert!(!gate.ready());
+        assert!(gate.observe("Are you all right?", now + STABLE_INTERVAL));
+        assert!(gate.ready());
     }
 
     #[test]
-    fn empty_readings_require_a_longer_stable_absence() {
+    fn fluctuating_short_and_long_text_never_replaces_confirmed_text() {
         let now = Instant::now();
-        let mut gate = TextGate::default();
-        assert!(!gate.ready(now + EMPTY_INTERVAL, true));
-        gate.observe("Keep reading.", now);
-        gate.observe("", now + STABLE_INTERVAL);
-        let cleared_at = now + STABLE_INTERVAL;
-        assert!(!gate.ready(cleared_at + STABLE_INTERVAL, true));
-        assert!(!gate.ready(cleared_at + EMPTY_INTERVAL, false));
-        assert!(!gate.ready(cleared_at + EMPTY_INTERVAL, true));
-        assert!(gate.needs_confirmation(cleared_at + EMPTY_INTERVAL));
-        gate.observe("", cleared_at + EMPTY_INTERVAL);
-        assert!(gate.ready(cleared_at + EMPTY_INTERVAL, false));
-        assert!(!gate.needs_confirmation(cleared_at + EMPTY_INTERVAL));
-    }
-
-    #[test]
-    fn small_changing_ocr_artifacts_do_not_starve_translation() {
-        let phrase = "There is no saved game on the memory card. Would you like to create a new file? Yes No";
-        let mut gate = TextGate::default();
-        let now = Instant::now();
-        assert!(gate.observe(phrase, now));
-        let revision = gate.revision;
-        for (index, noise) in ["l", "r", "I", "v", "l"].iter().enumerate() {
-            let at = now + OCR_INTERVAL * (index as u32 + 1);
-            assert!(!gate.observe(&format!("{noise} {phrase} |"), at));
-            assert!(
-                gate.ready(at, false),
-                "Animated background with small artifacts must become ready"
-            );
-            assert_eq!(gate.revision, revision);
-            assert_eq!(
-                gate.text, phrase,
-                "Anchor must not drift through successive near-matches"
-            );
+        for original in [
+            "Are you all right?",
+            "There is no saved game on the memory card. Would you like to create a new file?",
+        ] {
+            let mut gate = TextGate::default();
+            confirm(&mut gate, original, now);
+            for (i, text) in [
+                format!("{original} 3"),
+                original.replace('i', "l"),
+                original.into(),
+                String::new(),
+                format!("{original} |"),
+                original.into(),
+            ]
+            .iter()
+            .enumerate()
+            {
+                let at = now + Duration::from_secs(3 + i as u64 * 2);
+                assert!(!gate.observe(text, at));
+                assert_eq!(gate.text, original);
+                assert_eq!(gate.revision, 1);
+            }
+            assert!(gate.ready());
         }
     }
 
     #[test]
-    fn numbers_negations_and_short_messages_are_not_merged_as_ocr_noise() {
-        let phrase =
-            "You have 10 arrows in the inventory. Do not leave the village without your shield.";
-        assert!(!similar_ocr(phrase, &phrase.replace("10", "11")));
-        assert!(!similar_ocr(phrase, &phrase.replace("not ", "")));
-        assert!(!similar_ocr("Go east.", "Go west."));
-        assert!(!similar_ocr(
-            phrase,
-            "A completely different conversation now appears inside this dialogue box."
-        ));
-        assert!(!similar_ocr(phrase, ""));
+    fn two_alternating_variants_do_not_form_a_majority_loop() {
+        let now = Instant::now();
+        let mut gate = TextGate::default();
+        for i in 0..20 {
+            assert!(!gate.observe(
+                if i % 2 == 0 { "Go east." } else { "Go west." },
+                now + OCR_INTERVAL * i
+            ));
+            assert!(!gate.ready());
+        }
+        assert_eq!(gate.revision, 0);
     }
 
     #[test]
-    fn repeated_near_match_is_adopted_as_a_real_change() {
-        let phrase =
-            "Follow the path to the east until you reach the stone bridge near the village.";
-        let changed = phrase.replace("east", "west");
-        assert!(similar_ocr(phrase, &changed));
+    fn numbers_negations_and_small_real_changes_are_confirmed_not_merged() {
         let now = Instant::now();
         let mut gate = TextGate::default();
-        gate.observe(phrase, now);
-        assert!(!gate.observe(&changed, now + OCR_INTERVAL));
-        assert!(gate.needs_confirmation(now + OCR_INTERVAL * 2));
-        assert!(gate.observe(&changed, now + OCR_INTERVAL * 2));
-        assert!(!gate.needs_confirmation(now + OCR_INTERVAL * 2));
-        assert_eq!(gate.text, changed);
-        assert_eq!(gate.revision, 2);
-        assert!(gate.ready(now + OCR_INTERVAL * 2, false));
+        for (i, phrase) in [
+            "Go east.",
+            "Go west.",
+            "Spend 10 coins.",
+            "Spend 11 coins.",
+            "Do not enter.",
+            "Do enter.",
+        ]
+        .iter()
+        .enumerate()
+        {
+            confirm(&mut gate, phrase, now + Duration::from_secs(i as u64 * 3));
+            assert_eq!(gate.text, *phrase);
+            assert_eq!(gate.revision, i as u64 + 1);
+        }
+    }
+
+    #[test]
+    fn empty_readings_require_repetition_and_longer_stable_absence() {
+        let now = Instant::now();
+        let mut gate = TextGate::default();
+        confirm(&mut gate, "Keep reading.", now);
+        let at = now + Duration::from_secs(2);
+        assert!(!gate.observe("", at));
+        assert!(!gate.observe("", at + OCR_INTERVAL));
+        assert!(!gate.observe("", at + STABLE_INTERVAL));
+        assert_eq!(gate.text, "Keep reading.");
+        assert!(gate.observe("", at + EMPTY_INTERVAL));
+        assert_eq!(gate.text, "");
+        assert!(gate.ready());
+        assert!(!gate.needs_confirmation(at + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn progressive_dialogue_and_whitespace_need_repeated_observations() {
+        let now = Instant::now();
+        let mut gate = TextGate::default();
+        gate.observe("Hello", now);
+        gate.observe("Hello world!", now + OCR_INTERVAL);
+        gate.observe("Hello  world!\n", now + OCR_INTERVAL * 2);
+        assert!(!gate.ready());
+        assert!(gate.observe("Hello world!", now + OCR_INTERVAL * 3));
+        assert_eq!(gate.text, "Hello world!");
+        assert_eq!(gate.revision, 1);
     }
 
     #[test]
