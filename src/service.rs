@@ -4,6 +4,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::sync::{mpsc, oneshot};
 use zbus::object_server::SignalEmitter;
 
@@ -29,6 +30,12 @@ pub struct Snapshot {
     pub ocr_ms: u64,
     pub api_ms: u64,
     pub latency_ms: u64,
+    pub captured_frames: u64,
+    pub last_frame_age_ms: Option<u64>,
+    pub ocr_text: String,
+    pub ocr_confidence: Option<i32>,
+    pub api_successes: u64,
+    pub api_pending: bool,
 }
 
 impl Default for Snapshot {
@@ -51,6 +58,12 @@ impl Default for Snapshot {
             ocr_ms: 0,
             api_ms: 0,
             latency_ms: 0,
+            captured_frames: 0,
+            last_frame_age_ms: None,
+            ocr_text: String::new(),
+            ocr_confidence: None,
+            api_successes: 0,
+            api_pending: false,
         }
     }
 }
@@ -59,6 +72,7 @@ impl Default for Snapshot {
 pub struct Shared {
     pub snapshot: Snapshot,
     pub frames: Option<FrameSlot>,
+    pub last_frame_at: Option<Instant>,
 }
 pub type SharedState = Arc<Mutex<Shared>>;
 pub type Reply = oneshot::Sender<Result<(), String>>;
@@ -118,7 +132,10 @@ impl Service {
             .await
     }
     fn get_status(&self) -> String {
-        serde_json::to_string(&self.shared.lock().unwrap().snapshot).unwrap()
+        let shared = self.shared.lock().unwrap();
+        let mut snapshot = shared.snapshot.clone();
+        snapshot.last_frame_age_ms = shared.last_frame_at.map(|t| t.elapsed().as_millis() as u64);
+        serde_json::to_string(&snapshot).unwrap()
     }
     async fn get_preview(&self) -> zbus::fdo::Result<Vec<u8>> {
         let slot = self

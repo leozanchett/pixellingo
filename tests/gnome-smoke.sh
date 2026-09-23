@@ -39,7 +39,7 @@ import ast, json
 state = json.loads(ast.literal_eval(Path('.deps/overlay-state.txt').read_text())[0])
 assert state['visible'] and not state['reactive'] and not state['canFocus'], state
 assert state['text'] == 'A porta está trancada. Encontre a chave.', state
-assert state['y'] + state['height'] < 500, state
+assert state['y'] + state['height'] <= 492 or state['y'] >= 648, state
 assert state['fullscreen'] and state['focusedTitle'] == 'Area Translator — Synthetic Game', state
 print(state)
 PY
@@ -53,6 +53,25 @@ echo "Clicks received by fullscreen app: $clicks"
 gdbus call --session --dest org.gnome.Shell --object-path /io/github/areatranslator/Test \
     --method io.github.areatranslator.Test.Inspect
 test "$clicks" = '(uint32 1,)'
+python3 - <<'PY'
+import ast, json, subprocess, time
+base = ['gdbus', 'call', '--session']
+def inspect():
+    result = subprocess.check_output(base + ['--dest', 'org.gnome.Shell', '--object-path', '/io/github/areatranslator/Test', '--method', 'io.github.areatranslator.Test.Inspect'], text=True)
+    return json.loads(ast.literal_eval(result)[0])
+def subtitle(method):
+    subprocess.check_call(base + ['--dest', 'io.github.areatranslator.Service', '--object-path', '/io/github/areatranslator/Service', '--method', 'io.github.areatranslator.Service.' + method], stdout=subprocess.DEVNULL)
+    time.sleep(.3)
+subtitle('LongSubtitle')
+long = inspect()
+assert long['visible'] and long['height'] > 92, long
+assert long['y'] + long['height'] <= 492, long
+assert not long['reactive'] and not long['canFocus'], long
+subtitle('ShortSubtitle')
+short = inspect()
+assert short['visible'] and short['height'] < long['height'], short
+print('Subtitle grows for long translations and shrinks for short ones without overlapping capture.')
+PY
 gdbus call --session --dest io.github.areatranslator.Service --object-path /io/github/areatranslator/Service \
     --method io.github.areatranslator.Service.Pause
 sleep 1

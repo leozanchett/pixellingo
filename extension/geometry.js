@@ -10,6 +10,12 @@ export function overlaps(a, b) {
     return a.x < b.x + b.width && a.x + a.width > b.x
         && a.y < b.y + b.height && a.y + a.height > b.y;
 }
+export function subtitleHeight(region, monitor, naturalHeight) {
+    // Match the 16px gap used by placeSubtitle and the 8px monitor inset.
+    const above = region.y - monitor.y - 24;
+    const below = monitor.y + monitor.height - region.y - region.height - 24;
+    return Math.max(0, Math.min(Math.ceil(naturalHeight), Math.floor(Math.max(above, below))));
+}
 export function placeSubtitle(region, monitor, width, height, preferred = null) {
     const safe = {x: monitor.x + 8, y: monitor.y + 8, width: monitor.width - 16, height: monitor.height - 16};
     const clamp = candidate => ({x: Math.max(safe.x, Math.min(safe.x + safe.width - width, candidate.x)),

@@ -73,3 +73,11 @@ As metas de até 250 MB adicionais, menos de 5% da CPU total, menos de 3% de imp
 5. Compare a memória do serviço mais o incremento do Shell contra a referência. CPU total é a soma das diferenças, em percentual da máquina; 100% de um núcleo equivale a aproximadamente 8,33% neste processador de 12 threads. Compare FPS e percentis de tempo de quadro registrados pelo aplicativo; RSS sozinho não mede impacto gráfico.
 
 O coletor lê somente `/proc`; ele não grava telas. Para tempos de OCR/API, execute o serviço em primeiro plano com `RUST_LOG=area_translator=info` e armazene os logs de métricas. Eles não contêm o texto reconhecido.
+
+## Ajustes após o primeiro teste com emulador
+
+- Adicionado diagnóstico local de quadros, leitura/confiança do OCR, chamadas à API e tradução, atualizado somente enquanto sua página está aberta.
+- Seleções com mais de 400 pixels de altura passam a usar segmentação automática do Tesseract; recortes menores mantêm o modo de bloco único. A escolha reduz a suposição de que uma seleção com cenário constitui um único parágrafo, mas não substitui um recorte adequado.
+- Sete imagens sintéticas passaram pelo OCR nativo, incluindo diálogo sobre cenário; o caso de cenário obteve confiança 95 e texto exato. O teste também alterna novamente para o recorte pequeno no mesmo trabalhador.
+- Cinco testes de geometria passaram. No compositor GNOME isolado, a legenda cresceu com uma tradução longa e encolheu com uma curta, mantendo-se fora da área de captura. Passagem de cliques e foco continuaram funcionando.
+- A evidência enviada durante a depuração foi analisada localmente; não integra o repositório. As metas de consumo durante 15 minutos continuam pendentes.

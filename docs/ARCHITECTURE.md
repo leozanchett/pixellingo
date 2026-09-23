@@ -43,6 +43,8 @@ Estados: `idle`, `opening`, `selecting`, `running`, `paused`, `retrying`, `block
 
 Snapshot inclui `ocr_count`, `api_count`, `cache_hits`, `characters_sent`, `ocr_ms`, `api_ms`, `latency_ms`. Contagens acumulam durante a vida do processo. Os tempos são da última operação, não percentis; o log estruturado permite coletar a distribuição. `api_count` inclui tentativas que falharam. `latency_ms` mede desde o quadro que originou o texto, incluindo estabilidade e espera de rede.
 
+O diagnóstico sob demanda consulta `GetStatus` uma vez por segundo, somente enquanto a página estiver aberta. `captured_frames` conta recortes recebidos desde a seleção/retomada; `last_frame_age_ms` mede a idade do último quadro recebido (nulo antes do primeiro). `ocr_text` e `ocr_confidence` mostram a última leitura aceita e a confiança; texto de baixa confiança fica vazio. Esses campos são limpos na pausa, parada ou troca de área. `api_pending` indica uma chamada em andamento e `api_successes` conta respostas válidas durante a vida do serviço. Texto reconhecido e traduzido permanecem em memória e não são incluídos nos logs. A página de diagnóstico deve ficar fora da região selecionada.
+
 A extensão exporta `io.github.areatranslator.Overlay.GetMonitors() → s` no nome `org.gnome.Shell`, objeto `/io/github/areatranslator/Overlay`, com os monitores atuais em JSON.
 
 ## Concorrência e limites

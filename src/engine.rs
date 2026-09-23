@@ -188,6 +188,14 @@ impl Engine {
         self.latest = None;
         self.fingerprint.clear();
         self.dirty = false;
+        {
+            let mut shared = self.shared.lock().unwrap();
+            shared.last_frame_at = None;
+            shared.snapshot.captured_frames = 0;
+            shared.snapshot.ocr_text.clear();
+            shared.snapshot.ocr_confidence = None;
+            shared.snapshot.api_pending = false;
+        }
         if let Some(task) = self.network.take() {
             task.abort();
         }
@@ -384,6 +392,11 @@ impl Engine {
             .as_ref()
             .and_then(|c| c.slot.lock().unwrap().frame.take());
         if let Some(frame) = frame {
+            {
+                let mut shared = self.shared.lock().unwrap();
+                shared.last_frame_at = Some(frame.captured);
+                shared.snapshot.captured_frames += 1;
+            }
             let fingerprint = frame.fingerprint();
             if changed(&self.fingerprint, &fingerprint) {
                 self.fingerprint = fingerprint;
@@ -433,6 +446,8 @@ impl Engine {
                     let mut shared = self.shared.lock().unwrap();
                     shared.snapshot.ocr_count += 1;
                     shared.snapshot.ocr_ms = output.elapsed_ms;
+                    shared.snapshot.ocr_text = output.text.clone();
+                    shared.snapshot.ocr_confidence = Some(output.confidence);
                 }
                 tracing::info!(
                     ocr_ms = output.elapsed_ms,
@@ -444,6 +459,7 @@ impl Engine {
                     self.shown = None;
                     if let Some(task) = self.network.take() {
                         task.abort();
+                        self.shared.lock().unwrap().snapshot.api_pending = false;
                     }
                     self.show("").await;
                 }
@@ -499,6 +515,7 @@ impl Engine {
         {
             let mut shared = self.shared.lock().unwrap();
             shared.snapshot.api_count += 1;
+            shared.snapshot.api_pending = true;
             shared.snapshot.characters_sent += source.chars().count() as u64;
         }
         self.network = Some(tokio::spawn(async move {
@@ -518,6 +535,7 @@ impl Engine {
         if !self.network.as_ref().is_some_and(|task| task.is_finished()) {
             return;
         }
+        self.shared.lock().unwrap().snapshot.api_pending = false;
         let Ok(result) = self.network.take().unwrap().await else {
             return;
         };
@@ -532,6 +550,7 @@ impl Engine {
         self.shared.lock().unwrap().snapshot.api_ms = result.elapsed;
         match result.result {
             Ok(text) => {
+                self.shared.lock().unwrap().snapshot.api_successes += 1;
                 self.cache.put(result.source, text.clone());
                 self.failures = 0;
                 self.retry_at = Instant::now();

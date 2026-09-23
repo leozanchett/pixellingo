@@ -34,11 +34,14 @@ const store = password => new Promise((resolve, reject) => Secret.password_store
 const app = new Gtk.Application({application_id: 'io.github.areatranslator.App'});
 const smokeTest = ARGV.includes('--smoke-test');
 const smokeSelection = ARGV.includes('--smoke-selection');
+const smokeDiagnostics = ARGV.includes('--smoke-diagnostics');
 let window;
 let selecting = false;
 let selectionCancelled = false;
 let credentialsReady = false;
 let message;
+let diagnosticTimer = 0;
+let pageRevision = 0;
 
 function showError(error) {
     message.label = String(error.message ?? error).replace(/^GDBus\.Error:[^:]+:\s*/, '');
@@ -53,6 +56,8 @@ function button(label, action, primary = false) {
 }
 
 function page(title, subtitle) {
+    pageRevision++;
+    if (diagnosticTimer) { GLib.source_remove(diagnosticTimer); diagnosticTimer = 0; }
     const box = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 16,
         margin_start: 24, margin_end: 24, margin_top: 24, margin_bottom: 24});
     const heading = new Gtk.Label({label: title, xalign: 0});
@@ -86,8 +91,57 @@ function settings() {
         await selectArea();
     }, true));
     box.append(actions);
+    box.append(button('Diagnóstico: captura, OCR e tradução', diagnostics));
     box.append(message);
     box.append(new Gtk.Label({label: 'Depois de iniciar, use o ícone “Tradutor de área” na barra superior para pausar, reposicionar a legenda ou encerrar.', wrap: true, xalign: 0}));
+}
+
+function diagnostics() {
+    window.set_default_size(680, 620);
+    const box = page('Diagnóstico do PixelLingo', 'Deixe um diálogo em inglês parado na área selecionada. Esta janela mostra a última leitura, sem gravá-la em disco. Mantenha a janela fora da área capturada.');
+    const revision = pageRevision;
+    const field = title => {
+        const heading = new Gtk.Label({label: title, xalign: 0});
+        heading.add_css_class('heading'); box.append(heading);
+        const value = new Gtk.Label({label: 'Aguardando…', xalign: 0, wrap: true, selectable: true, max_width_chars: 80});
+        box.append(value); return value;
+    };
+    const capture = field('1. Captura');
+    const ocr = field('2. Leitura do OCR');
+    const source = field('Texto reconhecido');
+    const network = field('3. Tradução');
+    const translated = field('Última tradução');
+    const status = field('Estado');
+    box.append(button('Voltar', settings));
+    box.append(message);
+    window.set_child(null);
+    const scroll = new Gtk.ScrolledWindow({hscrollbar_policy: Gtk.PolicyType.NEVER});
+    scroll.set_child(box);
+    window.set_child(scroll);
+    let pending = false;
+    const refresh = async () => {
+        if (pending) return;
+        pending = true;
+        try {
+            const [json] = await service('GetStatus');
+            if (revision !== pageRevision) return;
+            const s = JSON.parse(json);
+            capture.label = !s.region ? 'Sem área ativa. Volte e selecione a caixa de diálogo.'
+                : `${s.region.width} × ${s.region.height} px; ${s.captured_frames ?? '—'} quadros recebidos nesta sessão; último quadro há ${s.last_frame_age_ms ?? '—'} ms.`;
+            ocr.label = `${s.ocr_count ?? 0} leituras; confiança da última: ${s.ocr_confidence ?? '—'}/100; tempo: ${s.ocr_ms ?? 0} ms.`;
+            source.label = s.ocr_text || (s.ocr_confidence == null ? 'Nenhuma leitura nesta sessão.'
+                : 'Nenhum texto aceito. Confira o recorte e a legibilidade; confiança inferior a 40 é descartada.');
+            network.label = `${s.api_count ?? 0} tentativas; ${s.api_successes ?? '—'} concluídas; ${s.cache_hits ?? 0} usos do cache; API: ${s.api_ms ?? 0} ms.${s.api_pending ? ' Aguardando resposta do Google…' : ''}`;
+            translated.label = s.translation || 'Nenhuma tradução exibida neste momento.';
+            status.label = s.message;
+        } catch (error) {
+            if (revision === pageRevision) status.label = `Não foi possível consultar o serviço: ${error.message}`;
+        } finally { pending = false; }
+    };
+    refresh();
+    diagnosticTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+        refresh(); return GLib.SOURCE_CONTINUE;
+    });
 }
 
 async function selectArea() {
@@ -208,18 +262,26 @@ app.connect('activate', () => {
     });
     settings();
     window.present();
-    if (smokeTest || smokeSelection) {
+    if (smokeTest || smokeSelection || smokeDiagnostics) {
         if (smokeSelection) {
             const [, bytes] = Gio.File.new_for_path(GLib.getenv('AREA_TRANSLATOR_TEST_IMAGE')).load_contents(null);
             renderSelection(bytes, {portal_position: [0, 0]}, [{x: 0, y: 0, width: 1280, height: 720, name: 'Monitor de teste'}]);
         }
+        if (smokeDiagnostics) diagnostics();
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
             print('GTK4 settings window rendered.'); app.quit(); return GLib.SOURCE_REMOVE;
         });
         return;
     }
     lookup().then(async key => {
-        if (key) { await service('SetApiKey', '(s)', [key]); credentialsReady = true; settings(); }
+        if (key) {
+            await service('SetApiKey', '(s)', [key]); credentialsReady = true;
+            if (pageRevision === 1) settings();
+        }
     }).catch(showError);
 });
-app.run(ARGV.filter(arg => !['--smoke-test', '--smoke-selection'].includes(arg)));
+app.connect('shutdown', () => {
+    pageRevision++;
+    if (diagnosticTimer) { GLib.source_remove(diagnosticTimer); diagnosticTimer = 0; }
+});
+app.run(ARGV.filter(arg => !['--smoke-test', '--smoke-selection', '--smoke-diagnostics'].includes(arg)));

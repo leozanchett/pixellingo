@@ -18,6 +18,7 @@ pub struct Ocr {
     delete_text: unsafe extern "C" fn(*mut c_char),
     confidence: unsafe extern "C" fn(Handle) -> c_int,
     clear_adaptive: unsafe extern "C" fn(Handle),
+    set_mode: unsafe extern "C" fn(Handle, c_int),
 }
 
 #[derive(Debug)]
@@ -46,7 +47,7 @@ impl Ocr {
             let delete_text = *library.get(b"TessDeleteText\0")?;
             let confidence = *library.get(b"TessBaseAPIMeanTextConf\0")?;
             let clear_adaptive = *library.get(b"TessBaseAPIClearAdaptiveClassifier\0")?;
-            let set_mode = library
+            let set_mode = *library
                 .get::<unsafe extern "C" fn(Handle, c_int)>(b"TessBaseAPISetPageSegMode\0")?;
             let handle = create();
             anyhow::ensure!(!handle.is_null(), "Não foi possível criar o OCR.");
@@ -76,6 +77,7 @@ impl Ocr {
                 delete_text,
                 confidence,
                 clear_adaptive,
+                set_mode,
             })
         }
     }
@@ -92,6 +94,9 @@ impl Ocr {
         // synchronous recognition completes; only this thread uses the handle.
         unsafe {
             (self.clear_adaptive)(self.handle);
+            // Tall selections often include menus/scenery, not one uniform
+            // text block. Automatic layout can separate decorative background.
+            (self.set_mode)(self.handle, if frame.height > 400 { 3 } else { 6 });
             (self.set_image)(
                 self.handle,
                 pixels.as_ptr(),

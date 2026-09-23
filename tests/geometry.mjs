@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {placeSubtitle, overlaps, regionOnScreen} from '../extension/geometry.js';
+import {placeSubtitle, overlaps, regionOnScreen, subtitleHeight} from '../extension/geometry.js';
 
 test('fractional scale and a monitor with negative origin', () => {
     const region = regionOnScreen({x: 200, y: 1000, width: 1200, height: 300},
@@ -25,4 +25,15 @@ test('valid user placement survives a new translation', () => {
     const region = {x: 50, y: 700, width: 1800, height: 300};
     assert.deepEqual(placeSubtitle(region, monitor, 900, 92, {x: 100, y: 40}),
         {x: 100, y: 40, width: 900, height: 92});
+});
+test('long subtitles expand, shrink and stay outside the capture on scaled monitors', () => {
+    const monitor = {x: -1280, y: 20, width: 1280, height: 720};
+    const region = {x: -1100, y: 420, width: 900, height: 180};
+    assert.equal(subtitleHeight(region, monitor, 56), 56);
+    assert.equal(subtitleHeight(region, monitor, 210), 210);
+    assert.equal(subtitleHeight(region, monitor, 900), 376);
+    const position = placeSubtitle(region, monitor, 900, subtitleHeight(region, monitor, 900));
+    assert.ok(position);
+    assert.equal(overlaps(position, region), false);
+    assert.equal(subtitleHeight(monitor, monitor, 56), 0);
 });

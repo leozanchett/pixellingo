@@ -23,3 +23,14 @@ for name, text, size, dark, pixelated in examples:
     (root / f'{name}.txt').write_text(' '.join(text.split()) + '\n')
 Image.new('L', (520, 90), 255).save(root / 'blank.png')
 (root / 'blank.txt').write_text('\n')
+
+# A large game-like selection with a decorative background and a centered dialog.
+image = Image.new('L', (640, 480), 25)
+draw = ImageDraw.Draw(image)
+for x in range(0, 640, 23):
+    draw.line((x, 0, x + 40, 480), fill=32, width=3)
+draw.rectangle((75, 210, 565, 325), fill=5, outline=110, width=3)
+text = 'There is no saved game.\nWould you like to create a new file?'
+draw.multiline_text((90, 235), text, font=ImageFont.truetype(font_path, 24), fill=245, spacing=10)
+image.save(root / 'scenery.png')
+(root / 'scenery.txt').write_text(' '.join(text.split()) + '\n')

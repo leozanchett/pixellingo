@@ -137,7 +137,7 @@ Capturas ficam em memória. A aplicação não salva imagens nem histórico de t
 
 Requisições repetidas usam o cache; erros de rede aplicam espera progressiva de 2 até 32 segundos. Autenticação inválida ou cota esgotada suspendem captura e novas chamadas até correção e retomada manual. Cancelar uma chamada local não garante que o provedor deixe de contabilizá-la. O aplicativo não impõe um teto de gastos: configure cotas no Google Cloud.
 
-OCR retorna vazio em leituras com baixa confiança. Fontes muito estilizadas, texto minúsculo, efeitos e cenários movimentados podem reduzir a qualidade. A primeira versão usa um bloco de texto; não reconstrói a disposição de menus complexos. Legendas muito longas são limitadas visualmente à faixa disponível. Prefira selecionar a caixa de diálogo justa.
+OCR retorna vazio em leituras com baixa confiança. Fontes muito estilizadas, texto minúsculo, efeitos e cenários movimentados podem reduzir a qualidade. A primeira versão usa um bloco de texto; não reconstrói a disposição de menus complexos. A altura da legenda acompanha o texto e diminui quando a tradução encurta. Ela pode mudar para cima da região quando não há espaço suficiente abaixo; textos que excedem todo o espaço livre são limitados visualmente para não sobrepor a área de OCR. Prefira selecionar a caixa de diálogo justa.
 
 ## Desenvolvimento e testes
 
@@ -151,7 +151,7 @@ glib-compile-schemas --strict --dry-run extension/schemas
 ./scripts/dev.sh target/release/area-translator --check
 ```
 
-O teste nativo de OCR é opt-in porque precisa da biblioteca e do modelo. Ele usa seis imagens sintéticas, incluindo fonte pequena/pixelada, fundo escuro, múltiplas linhas e quadro vazio. Para regenerá-las, instale Pillow e execute `python3 scripts/make-fixtures.py`.
+O teste nativo de OCR é opt-in porque precisa da biblioteca e do modelo. Ele usa sete imagens sintéticas, incluindo fonte pequena/pixelada, fundo escuro, múltiplas linhas e quadro vazio. Para regenerá-las, instale Pillow e execute `python3 scripts/make-fixtures.py`.
 
 Testes de integração adicionais, sem tocar na sessão gráfica atual:
 
@@ -175,6 +175,10 @@ Arquitetura e contrato D-Bus: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 A chave é preservada no chaveiro. Para removê-la também, apague a entrada **Area Translator — Google Cloud** no aplicativo **Senhas e chaves**.
 
 ## Solução de problemas
+
+Se a legenda não aparecer, abra **Tradutor de área → Diagnóstico: captura, OCR e tradução**. A página mostra os quadros recebidos, a confiança e o texto lido pelo OCR, as tentativas/conclusões da API e a última tradução. As contagens de OCR/API acumulam durante a vida do serviço; a contagem de quadros reinicia na seleção/retomada. Mantenha essa janela fora da área selecionada para não reconhecer a própria interface.
+
+Se o texto lido estiver vazio ou incorreto, ajuste a região para conter somente a caixa de diálogo e confira a legibilidade. Se estiver correto, mas sem tradução, consulte o estado da API nessa mesma página. Se a tradução estiver presente no diagnóstico, mas não na tela, confira a extensão e o espaço reservado à legenda. Os dados do diagnóstico permanecem em memória.
 
 | Sintoma | O que verificar |
 | --- | --- |

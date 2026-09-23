@@ -9,7 +9,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {placeSubtitle, regionOnScreen} from './geometry.js';
+import {placeSubtitle, regionOnScreen, subtitleHeight} from './geometry.js';
 
 const BUS = 'io.github.areatranslator.Service';
 const PATH = '/io/github/areatranslator/Service';
@@ -138,10 +138,15 @@ export default class AreaTranslator extends Extension {
         }
         const region = regionOnScreen(s.region, s.monitor, s.frame_size);
         const width = Math.min(900, s.monitor.width - 32);
-        const height = 92;
+        this._label.text = this._editing ? 'Arraste a legenda e solte para confirmar' : this._text;
+        // Release the previous height before measuring the wrapped text. Long
+        // translations grow into the available space instead of a fixed 92px box.
+        this._label.set_size(width, -1);
+        const [, naturalHeight] = this._label.get_preferred_height(width);
+        const height = subtitleHeight(region, s.monitor, naturalHeight);
+        if (!height) { this._label.hide(); return; }
         const position = placeSubtitle(region, s.monitor, width, height, this._preferred);
         if (!position) { this._label.hide(); return; }
-        this._label.text = this._editing ? 'Arraste a legenda e solte para confirmar' : this._text;
         this._label.set_size(width, height);
         this._label.set_position(Math.round(position.x), Math.round(position.y));
         this._label.show();

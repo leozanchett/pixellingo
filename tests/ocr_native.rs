@@ -7,7 +7,16 @@ use std::{fs::File, io::BufReader, time::Instant};
 #[ignore = "requires libtesseract5 and the English fast model"]
 fn real_ocr_on_synthetic_dialogues() {
     let mut ocr = Ocr::new().unwrap();
-    for name in ["dialog", "dark", "small", "pixelated", "multiline", "blank"] {
+    for name in [
+        "dialog",
+        "dark",
+        "small",
+        "pixelated",
+        "multiline",
+        "blank",
+        "scenery",
+        "dialog",
+    ] {
         let decoder = png::Decoder::new(BufReader::new(
             File::open(format!("tests/fixtures/{name}.png")).unwrap(),
         ));
