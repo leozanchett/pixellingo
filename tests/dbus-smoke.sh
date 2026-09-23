@@ -25,6 +25,7 @@ for attempt in range(30):
 assert result is not None and result.returncode == 0, 'Test service did not start'
 state = json.loads(ast.literal_eval(result.stdout)[0])
 assert state['state'] == 'idle', state
+assert call('GetCropPreview').returncode != 0, 'Crop preview requires an active capture'
 assert call('BeginSelection').returncode != 0, 'Capture must require configuration'
 assert call('BeginWindowSelection').returncode != 0, 'Window capture must also require configuration'
 assert call('SetApiKey', 'bad key').returncode != 0

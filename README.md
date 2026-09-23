@@ -111,6 +111,8 @@ Redimensionar a janela, mudar a resolução ou entrar/sair de tela cheia pode al
 
 Bloquear a sessão oculta a legenda e pausa a tradução. Retome pelo menu ou atalho após desbloquear.
 
+No diagnóstico, **Conferir imagem enviada ao OCR** mostra um único recorte recente em escala de cinza. Use-o para verificar se a frase está inteira dentro da seleção. A imagem é solicitada somente ao clicar, fica em memória e não é salva. Recortes com mais de 400 pixels de altura usam detecção de texto esparso para evitar que uma frase curta seja descartada como parte do cenário. Ainda é preferível selecionar a caixa de diálogo justa.
+
 ## Primeiro teste com emulador
 
 1. Abra seu emulador e um jogo com diálogos em inglês. Escolha a resolução e a posição final da janela; se for jogar em tela cheia, entre nesse modo antes de selecionar a área.
@@ -157,7 +159,7 @@ glib-compile-schemas --strict --dry-run extension/schemas
 ./scripts/dev.sh target/release/area-translator --check
 ```
 
-O teste nativo de OCR é opt-in porque precisa da biblioteca e do modelo. Ele usa sete imagens sintéticas, incluindo fonte pequena/pixelada, fundo escuro, múltiplas linhas e quadro vazio. Para regenerá-las, instale Pillow e execute `python3 scripts/make-fixtures.py`.
+O teste nativo de OCR é opt-in porque precisa da biblioteca e do modelo. Ele usa dez imagens sintéticas, incluindo fonte pequena/pixelada, fundo escuro, múltiplas linhas, uma frase curta sobre cenários diferentes e quadros vazios. Para regenerá-las, instale Pillow e execute `python3 scripts/make-fixtures.py`.
 
 Testes de integração adicionais, sem tocar na sessão gráfica atual:
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generate synthetic OCR fixtures, never screen captures. Requires Pillow."""
+import random
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
@@ -34,3 +35,20 @@ text = 'There is no saved game.\nWould you like to create a new file?'
 draw.multiline_text((90, 235), text, font=ImageFont.truetype(font_path, 24), fill=245, spacing=10)
 image.save(root / 'scenery.png')
 (root / 'scenery.txt').write_text(' '.join(text.split()) + '\n')
+
+# A short line at the top of a large moving scene. No game screenshots/assets.
+for name, seed, text in [('sparse-dialog', 7, 'Are you all right?'),
+                         ('sparse-dialog-moved', 19, 'Are you all right?'),
+                         ('sparse-empty', 7, '')]:
+    rng = random.Random(seed)
+    image = Image.new('L', (640, 480), 80)
+    draw = ImageDraw.Draw(image)
+    for _ in range(1500):
+        x, y = rng.randrange(640), rng.randrange(480)
+        draw.ellipse((x, y, x + rng.randrange(2, 12), y + rng.randrange(2, 8)), fill=rng.randrange(35, 120))
+    draw.rounded_rectangle((30, 20, 400, 140), radius=15, fill=25, outline=155, width=3)
+    draw.ellipse((65, 35, 140, 110), fill=100)
+    draw.polygon([(60, 135), (90, 95), (120, 95), (150, 135)], fill=135)
+    draw.text((180, 45), text, font=ImageFont.truetype(font_path, 20), fill=245)
+    image.save(root / f'{name}.png')
+    (root / f'{name}.txt').write_text(text + '\n')

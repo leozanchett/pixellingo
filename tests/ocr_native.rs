@@ -15,6 +15,9 @@ fn real_ocr_on_synthetic_dialogues() {
         "multiline",
         "blank",
         "scenery",
+        "sparse-dialog",
+        "sparse-dialog-moved",
+        "sparse-empty",
         "dialog",
     ] {
         let decoder = png::Decoder::new(BufReader::new(

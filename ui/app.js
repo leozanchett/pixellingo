@@ -114,6 +114,19 @@ function diagnostics() {
         box.append(value); return value;
     };
     const capture = field('1. Captura');
+    const crop = new Gtk.Picture({can_shrink: true, visible: false, height_request: 180});
+    box.append(crop);
+    let cropPending = false;
+    box.append(button('Conferir imagem enviada ao OCR', async () => {
+        if (cropPending) return;
+        cropPending = true;
+        try {
+            const [bytes] = await service('GetCropPreview');
+            if (revision !== pageRevision) return;
+            crop.set_paintable(Gdk.Texture.new_from_bytes(new GLib.Bytes(bytes)));
+            crop.visible = true;
+        } finally { cropPending = false; }
+    }));
     const ocr = field('2. Leitura do OCR');
     const source = field('Texto reconhecido');
     const network = field('3. Tradução');
@@ -137,7 +150,7 @@ function diagnostics() {
                 : `${s.source_type === 'window' ? 'Janela' : 'Monitor'}: ${s.region.width} × ${s.region.height} px; ${s.captured_frames ?? '—'} quadros recebidos nesta sessão; último quadro há ${s.last_frame_age_ms ?? '—'} ms.`;
             ocr.label = `${s.ocr_count ?? 0} leituras; confiança da última: ${s.ocr_confidence ?? '—'}/100; tempo: ${s.ocr_ms ?? 0} ms.`;
             source.label = s.ocr_text || (s.ocr_confidence == null ? 'Nenhuma leitura nesta sessão.'
-                : 'Nenhum texto aceito. Confira o recorte e a legibilidade; confiança inferior a 40 é descartada.');
+                : 'Nenhum texto legível encontrado. Confira se a frase aparece inteira na imagem do recorte.');
             network.label = `${s.api_count ?? 0} tentativas; ${s.api_successes ?? '—'} concluídas; ${s.cache_hits ?? 0} usos do cache; API: ${s.api_ms ?? 0} ms.${s.api_pending ? ' Aguardando resposta do Google…' : ''}`;
             translated.label = s.translation || 'Nenhuma tradução exibida neste momento.';
             status.label = s.message;

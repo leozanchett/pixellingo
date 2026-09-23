@@ -15,6 +15,7 @@ pub struct Ocr {
     delete: unsafe extern "C" fn(Handle),
     set_image: unsafe extern "C" fn(Handle, *const u8, c_int, c_int, c_int, c_int),
     get_text: unsafe extern "C" fn(Handle) -> *mut c_char,
+    get_tsv: unsafe extern "C" fn(Handle, c_int) -> *mut c_char,
     delete_text: unsafe extern "C" fn(*mut c_char),
     confidence: unsafe extern "C" fn(Handle) -> c_int,
     clear_adaptive: unsafe extern "C" fn(Handle),
@@ -44,6 +45,7 @@ impl Ocr {
                     )?;
             let set_image = *library.get(b"TessBaseAPISetImage\0")?;
             let get_text = *library.get(b"TessBaseAPIGetUTF8Text\0")?;
+            let get_tsv = *library.get(b"TessBaseAPIGetTsvText\0")?;
             let delete_text = *library.get(b"TessDeleteText\0")?;
             let confidence = *library.get(b"TessBaseAPIMeanTextConf\0")?;
             let clear_adaptive = *library.get(b"TessBaseAPIClearAdaptiveClassifier\0")?;
@@ -74,6 +76,7 @@ impl Ocr {
                 delete,
                 set_image,
                 get_text,
+                get_tsv,
                 delete_text,
                 confidence,
                 clear_adaptive,
@@ -94,9 +97,10 @@ impl Ocr {
         // synchronous recognition completes; only this thread uses the handle.
         unsafe {
             (self.clear_adaptive)(self.handle);
-            // Tall selections often include menus/scenery, not one uniform
-            // text block. Automatic layout can separate decorative background.
-            (self.set_mode)(self.handle, if frame.height > 400 { 3 } else { 6 });
+            // Automatic page layout (PSM 3) can discard a short dialogue on a
+            // large game scene entirely. Sparse text finds separate text areas.
+            let sparse = frame.height > 400;
+            (self.set_mode)(self.handle, if sparse { 11 } else { 6 });
             (self.set_image)(
                 self.handle,
                 pixels.as_ptr(),
@@ -105,17 +109,28 @@ impl Ocr {
                 1,
                 width as i32,
             );
-            let text_ptr = (self.get_text)(self.handle);
+            let text_ptr = if sparse {
+                (self.get_tsv)(self.handle, 0)
+            } else {
+                (self.get_text)(self.handle)
+            };
             anyhow::ensure!(!text_ptr.is_null(), "OCR não retornou um resultado.");
             let text = CStr::from_ptr(text_ptr).to_string_lossy().into_owned();
             (self.delete_text)(text_ptr);
-            let confidence = (self.confidence)(self.handle);
-            Ok(OcrOutput {
-                text: if confidence >= 40 {
+            let (text, confidence) = if sparse {
+                reliable_lines(&text)
+            } else {
+                let confidence = (self.confidence)(self.handle);
+                let text = if confidence >= 40 {
                     normalize(&text)
                 } else {
                     String::new()
-                },
+                };
+                let confidence = if text.is_empty() { 0 } else { confidence };
+                (text, confidence)
+            };
+            Ok(OcrOutput {
+                text,
                 confidence,
                 elapsed_ms: start.elapsed().as_millis() as u64,
             })
@@ -129,6 +144,68 @@ impl Drop for Ocr {
             (self.delete)(self.handle);
         }
     }
+}
+
+// Filter whole lines, never individual words: dropping an uncertain "not" or
+// number inside an otherwise readable sentence would change its meaning.
+fn reliable_lines(tsv: &str) -> (String, i32) {
+    let mut key = String::new();
+    let mut words = Vec::new();
+    let mut weight = 0usize;
+    let mut score = 0.0;
+    let mut accepted = Vec::new();
+    let mut total_weight = 0usize;
+    let mut total_score = 0.0;
+    let mut flush = |words: &mut Vec<&str>, weight: &mut usize, score: &mut f64| {
+        // Sparse scenery often yields isolated punctuation/letters. Require
+        // three alphanumeric characters, or a confident real short word/number.
+        let text = words.join(" ");
+        let short_word = text.trim_matches(|c: char| !c.is_alphanumeric());
+        let enough_text = *weight >= 3
+            || (matches!(
+                short_word.to_ascii_lowercase().as_str(),
+                "no" | "ok" | "go" | "up" | "on"
+            ) && *score >= 85.0 * *weight as f64)
+            || (*weight >= 2
+                && short_word.chars().all(|c| c.is_numeric())
+                && *score >= 85.0 * *weight as f64);
+        if *weight > 0 && enough_text && *score >= 65.0 * *weight as f64 {
+            accepted.push(text);
+            total_weight += *weight;
+            total_score += *score;
+        }
+        words.clear();
+        *weight = 0;
+        *score = 0.0;
+    };
+    for line in tsv.lines() {
+        let columns: Vec<_> = line.splitn(12, '\t').collect();
+        if columns.len() != 12 || columns[0] != "5" {
+            continue;
+        }
+        let next_key = columns[1..5].join("/");
+        if next_key != key {
+            flush(&mut words, &mut weight, &mut score);
+            key = next_key;
+        }
+        let Ok(confidence) = columns[10].parse::<f64>() else {
+            continue;
+        };
+        if !confidence.is_finite() || !(0.0..=100.0).contains(&confidence) {
+            continue;
+        }
+        let letters = columns[11].chars().filter(|c| c.is_alphanumeric()).count();
+        words.push(columns[11]);
+        weight += letters;
+        score += confidence * letters as f64;
+    }
+    flush(&mut words, &mut weight, &mut score);
+    let confidence = if total_weight == 0 {
+        0
+    } else {
+        (total_score / total_weight as f64).round() as i32
+    };
+    (normalize(&accepted.join(" ")), confidence)
 }
 
 fn preprocess(frame: &Frame) -> (Vec<u8>, u32, u32) {
@@ -166,6 +243,32 @@ fn preprocess(frame: &Frame) -> (Vec<u8>, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sparse_lines_discard_scenery_without_dropping_uncertain_negations() {
+        let rows = [
+            (1, "~", 95),
+            (2, "x", 79),
+            (3, "Are", 96),
+            (3, "you", 96),
+            (3, "all", 94),
+            (3, "right?", 90),
+            (4, "Do", 96),
+            (4, "not", 35),
+            (4, "spend", 96),
+            (4, "10", 96),
+            (4, "coins.", 96),
+        ];
+        let tsv = rows
+            .iter()
+            .map(|(line, word, confidence)| {
+                format!("5\t1\t1\t1\t{line}\t1\t0\t0\t20\t20\t{confidence}\t{word}\n")
+            })
+            .collect::<String>();
+        let (text, confidence) = reliable_lines(&tsv);
+        assert_eq!(text, "Are you all right? Do not spend 10 coins.");
+        assert!(confidence >= 80);
+        assert_eq!(reliable_lines(""), (String::new(), 0));
+    }
     #[test]
     fn dark_dialogue_becomes_light_background() {
         let frame = Frame {

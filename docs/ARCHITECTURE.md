@@ -27,6 +27,7 @@ Durante a seleção existe somente uma prévia RGB congelada. `GetPreview` a cod
 | `BeginWindowSelection` | — | Cancela a sessão anterior e abre o portal para uma janela. Requer chave configurada. |
 | `GetStatus` | — | `s`: snapshot JSON sem credencial. |
 | `GetPreview` | — | `ay`: PNG da prévia em memória, somente durante a seleção. |
+| `GetCropPreview` | — | `ay`: PNG de um recorte recente sob demanda, durante a captura ativa. |
 | `SetRegion` | `ss` | JSON de `Rect` e `Monitor`; valida e inicia o processamento. |
 | `Pause` | — | Invalida trabalhos e pausa captura/rede. |
 | `Resume` | — | Reinicia leitura da área existente e libera bloqueio de API após ação manual. |
@@ -61,3 +62,11 @@ A estabilidade tolera pequenas diferenças em frases com pelo menos oito palavra
 A normalização para envio e cache preserva letras, caixa e pontuação, uniformizando apenas espaços. O cache continua usando chaves exatas, sem correspondência aproximada. O cache guarda 2.000 pares para a combinação fixa inglês → PT-BR/NMT. OCR de baixa confiança é considerado vazio, evitando enviar ruído. Requisições têm timeout total de 10 segundos, conexão de 5 segundos e no máximo 4.000 caracteres por texto. A pausa não garante cancelamento da cobrança de uma requisição já recebida pelo Google.
 
 Nenhum endpoint HTTP é exposto. Não há telemetria. A interface D-Bus pertence à sessão do usuário; outros processos da mesma sessão têm a mesma fronteira de confiança do desktop.
+
+## Texto curto em cenas grandes
+
+Recortes com mais de 400 pixels de altura usam Tesseract PSM 11 (texto esparso), com saída TSV para agrupar palavras por linha. O modo automático PSM 3 podia retornar vazio mesmo com uma frase curta legível. Linhas são aceitas por confiança média ponderada pelos caracteres alfanuméricos (mínimo 65). A filtragem preserva a linha completa, inclusive palavras incertas como negações e números. Fragmentos isolados com menos de três caracteres são descartados, salvo algumas opções curtas comuns e números de dois ou mais dígitos com confiança alta. Isso reduz falsos textos do cenário, mas pode omitir rótulos curtos; seleções justas com até 400 pixels continuam no modo de bloco PSM 6, sem esse filtro.
+
+`GetCropPreview() → ay` fornece PNG em escala de cinza do próximo recorte. Há no máximo uma solicitação pendente, com espera de três segundos. Somente essa solicitação copia os pixels do recorte; não há prévia contínua, gravação em disco ou chamada à API. Uma captura pausada é rejeitada. A UI só solicita a imagem quando o usuário clica no botão de diagnóstico.
+
+Referência do formato TSV: [documentação do Tesseract](https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html#tsv-output).

@@ -22,6 +22,7 @@ pub struct SharedFrames {
     pub dimensions: Option<(u32, u32)>,
     pub error: Option<String>,
     pub paused: bool,
+    pub diagnostic_request: Option<tokio::sync::oneshot::Sender<Frame>>,
     last_sample: Option<Instant>,
 }
 
@@ -168,6 +169,7 @@ impl Capture {
         let mut state = self.slot.lock().unwrap();
         state.paused = paused;
         state.frame = None;
+        state.diagnostic_request = None;
         state.last_sample = None;
         drop(state);
         self.pipeline.set_state(if paused {
@@ -272,12 +274,18 @@ fn consume_sample(sample: &gst::Sample, state: &mut SharedFrames) -> Result<()> 
     if state.region.is_none() {
         state.preview = Some((region.width, region.height, pixels));
     } else {
-        state.frame = Some(Frame {
+        let frame = Frame {
             width: region.width,
             height: region.height,
             gray: pixels,
             captured: Instant::now(),
-        });
+        };
+        if let Some(reply) = state.diagnostic_request.take()
+            && !reply.is_closed()
+        {
+            let _ = reply.send(frame.clone());
+        }
+        state.frame = Some(frame);
     }
     Ok(())
 }
@@ -332,10 +340,16 @@ mod tests {
             }),
             ..Default::default()
         };
+        let (reply, mut diagnostic) = tokio::sync::oneshot::channel();
+        state.diagnostic_request = Some(reply);
         consume_sample(&sample, &mut state).unwrap();
-        let frame = state.frame.unwrap();
+        let preview = diagnostic.try_recv().unwrap();
+        let frame = state.frame.as_ref().unwrap();
         assert_eq!(frame.gray.len(), 256);
         assert!(frame.gray.iter().all(|p| *p == 76));
+        assert_eq!(preview.gray, frame.gray);
+        assert_eq!((preview.width, preview.height), (16, 16));
+        assert!(state.diagnostic_request.is_none(), "Only copy on demand");
     }
 
     #[test]
