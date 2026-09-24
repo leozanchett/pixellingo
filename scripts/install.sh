@@ -14,7 +14,8 @@ bin_dir="$install_prefix/bin"
 extension_root="$install_prefix/share/gnome-shell/extensions/area-translator@local"
 mkdir -p "$install_root/bin" "$install_root/ui" \
     "$bin_dir" "$extension_root/schemas" "$install_prefix/share/applications" "$install_prefix/share/dbus-1/services"
-install -m755 target/release/area-translator "$install_root/bin/area-translator"
+install -m755 target/release/area-translator "$install_root/bin/area-translator.new"
+mv -f "$install_root/bin/area-translator.new" "$install_root/bin/area-translator"
 install -m644 ui/app.js "$install_root/ui/app.js"
 install -m644 ui/refresh.js "$install_root/ui/refresh.js"
 install -m644 ui/shortcut.js "$install_root/ui/shortcut.js"
@@ -22,7 +23,8 @@ install -m644 extension/*.js extension/*.json extension/*.css "$extension_root/"
 install -m644 extension/schemas/*.xml "$extension_root/schemas/"
 glib-compile-schemas --strict "$extension_root/schemas"
 # Remove only legacy files previously bundled by this installer.
-rm -f -- "$install_root/lib/libtesseract.so.5" "$install_root/lib/liblept.so.5" \
+rm -f -- "$install_root/bin/tesseract" "$install_root/tessdata/configs/tsv" \
+    "$install_root/licenses/tesseract-ocr.txt" "$install_root/lib/libtesseract.so.5" "$install_root/lib/liblept.so.5" \
     "$install_root/tessdata/eng.traineddata" "$install_root/licenses/libtesseract5.txt" \
     "$install_root/licenses/liblept5.txt" "$install_root/licenses/tesseract-ocr-eng.txt"
 # Python's shell quoting handles spaces and special characters in the home path.
@@ -48,7 +50,7 @@ def desktop_quote(s):
 PY
 if command -v update-desktop-database >/dev/null; then update-desktop-database "$install_prefix/share/applications"; fi
 gjs -m scripts/refresh-shortcut.js install "$bin_dir/area-translator-refresh"
-echo 'Refresh registrado: Super + Shift + R (ou sua combinação personalizada existente).'
+echo 'Refresh registrado: Ctrl+A (ou sua combinação personalizada existente).'
 echo 'Instalado. Ative a extensão com: gnome-extensions enable area-translator@local'
 echo 'Se o GNOME ainda não encontrar a extensão, saia da sessão e entre novamente.'
 echo "Abra “Tradutor de área” no menu de aplicativos ou execute: $bin_dir/area-translator-ui"

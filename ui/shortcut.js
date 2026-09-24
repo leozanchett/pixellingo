@@ -4,7 +4,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 export const SHORTCUT_PATH = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/pixellingo-refresh/';
-export const DEFAULT_SHORTCUT = '<Super><Shift>r';
+export const DEFAULT_SHORTCUT = '<Control>a';
 const ROOT_SCHEMA = 'org.gnome.settings-daemon.plugins.media-keys';
 const CUSTOM_SCHEMA = `${ROOT_SCHEMA}.custom-keybinding`;
 const custom = path => new Gio.Settings({schema_id: CUSTOM_SCHEMA, path});

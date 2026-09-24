@@ -33,7 +33,7 @@ rejects(() => saveShortcut('<Alt>F4'));
 saveShortcut('');
 assert(shortcutLabel() === 'Desativado', 'Disable should persist');
 saveShortcut(DEFAULT_SHORTCUT);
-assert(readShortcut().includes('Super') && readShortcut().endsWith('r'), 'Restore default');
+assert(readShortcut().includes('Control') && readShortcut().endsWith('a'), 'Restore default');
 assert(settings(other).get_string('binding') === '<Control><Alt>k', 'Other binding changed');
 
 const parent = new Gtk.Window({title: 'PixelLingo — Teste de configuração', default_width: 560, default_height: 300});
@@ -69,7 +69,7 @@ GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
         assert(saved === 2 && readShortcut() === '', 'Disable must apply on save');
         dialog = showShortcutDialog(parent, () => saved++);
         click(dialog, 'Restaurar padrão'); click(dialog, 'Salvar');
-        assert(saved === 3 && readShortcut().endsWith('r'), 'Restore must apply on save');
+        assert(saved === 3 && readShortcut().endsWith('a'), 'Restore must apply on save');
         dialog = showShortcutDialog(parent, () => saved++);
         print('Shortcut validation, conflicts, recording, cancel, disable and restore passed.');
     } catch (e) { failure = e; }
