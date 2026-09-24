@@ -78,8 +78,13 @@ Referências: [OCR do Cloud Vision](https://docs.cloud.google.com/vision/docs/oc
 
 ## Atualização manual
 
-O instalador registra `Super + Shift + R` como atalho personalizado do GNOME, preservando os demais atalhos e uma combinação alterada pelo usuário em reinstalações. O cliente GJS efêmero chama `Refresh` com `NO_AUTO_START`: não abre GTK, toma foco nem inicia o serviço quando ele estiver parado. A desinstalação remove somente a entrada própria.
+O instalador salva `Ctrl+A` como padrão, preservando a combinação escolhida e os demais atalhos. A preferência fica na entrada própria de GSettings, mas essa entrada só integra a lista `custom-keybindings` quando o snapshot tem estado `running` e região válida. Pausa, parada, seleção, bloqueio e erro retiram a entrada da lista, sem apagar a combinação. O cliente GJS efêmero chama `Refresh` com `NO_AUTO_START`: não abre GTK, toma foco nem inicia o serviço quando ele estiver parado. A desinstalação remove somente a entrada própria.
 
-O atalho usa `Refresh` para solicitar uma tradução manual. Quando não existe captura ativa, o cliente mostra uma notificação local e encerra, sem abrir GTK nem tomar foco. Acionamentos válidos conservam somente o prazo restante da legenda anterior durante a operação.
+O atalho usa `Refresh` para solicitar uma tradução manual. Quando executado explicitamente pelo terminal sem captura ativa, o cliente mostra uma notificação local e encerra, sem abrir GTK nem tomar foco. As teclas não executam esse cliente enquanto a captura estiver parada. Acionamentos válidos conservam somente o prazo restante da legenda anterior durante a operação.
 
 A configuração GTK grava a combinação na mesma entrada de GSettings do atalho global. O gravador suspende os atalhos do sistema somente enquanto a janela modal está aberta e os restaura ao fechá-la. Cancelar não grava alterações; desativar grava uma combinação vazia, preservada pelo instalador. São aceitas combinações com Ctrl/Alt/Super ou teclas de função, com validação contra atalhos personalizados e esquemas comuns do GNOME, incluindo pausa/retomada da extensão quando instalada. Atalhos internos de outros aplicativos não são enumerados.
+
+
+Na instalação local, o processo Rust inicia um pequeno acompanhante GJS (`shortcut-guard.js`), sem GTK e sem consultas periódicas, para acompanhar `StatusChanged` e a conexão D-Bus única do serviço. A perda dessa conexão também libera o atalho em caso de queda inesperada e encerra o acompanhante. A consulta inicial não pode sobrescrever um evento de estado mais recente. O guardião existe durante a vida do serviço; não executa OCR, captura ou rede. Binários de desenvolvimento fora da estrutura instalada não iniciam esse acompanhante.
+
+A janela GTK oferece **Encerrar captura e liberar atalho**. Fechar a configuração continua independente da captura, pois a seleção também fecha a janela ao preparar o jogo. O menu existente da extensão chama o mesmo `Stop`; nenhuma alteração ou recarga da extensão é necessária para liberar o atalho.

@@ -17,7 +17,8 @@ const rejects = callback => {
 const root = new Gio.Settings({schema_id: 'org.gnome.settings-daemon.plugins.media-keys'});
 const settings = path => new Gio.Settings({schema_id: 'org.gnome.settings-daemon.plugins.media-keys.custom-keybinding', path});
 const other = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/test-other/';
-root.set_strv('custom-keybindings', [SHORTCUT_PATH, other]);
+root.set_strv('custom-keybindings', [other]);
+settings(SHORTCUT_PATH).set_string('command', '/test/refresh');
 settings(other).set_string('name', 'Atalho existente');
 settings(other).set_string('binding', '<Control><Alt>k');
 assert(acceleratorFromKey(Gdk.KEY_Shift_L, 0) === null, 'Modifier alone must wait');
@@ -25,6 +26,7 @@ rejects(() => acceleratorFromKey(Gdk.KEY_a, 0));
 rejects(() => acceleratorFromKey(Gdk.KEY_A, Gdk.ModifierType.SHIFT_MASK));
 saveShortcut('F8');
 assert(readShortcut() === 'F8', 'Function key should persist');
+assert(!root.get_strv('custom-keybindings').includes(SHORTCUT_PATH), 'Saving while idle must not reserve the key');
 rejects(() => saveShortcut('<Control><Alt>k'));
 assert(readShortcut() === 'F8', 'Conflict must preserve previous binding');
 const wm = new Gio.Settings({schema_id: 'org.gnome.desktop.wm.keybindings'});

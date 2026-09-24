@@ -19,6 +19,7 @@ mv -f "$install_root/bin/area-translator.new" "$install_root/bin/area-translator
 install -m644 ui/app.js "$install_root/ui/app.js"
 install -m644 ui/refresh.js "$install_root/ui/refresh.js"
 install -m644 ui/shortcut.js "$install_root/ui/shortcut.js"
+install -m644 ui/shortcut-state.js ui/shortcut-guard.js "$install_root/ui/"
 install -m644 extension/*.js extension/*.json extension/*.css "$extension_root/"
 install -m644 extension/schemas/*.xml "$extension_root/schemas/"
 glib-compile-schemas --strict "$extension_root/schemas"
@@ -50,7 +51,7 @@ def desktop_quote(s):
 PY
 if command -v update-desktop-database >/dev/null; then update-desktop-database "$install_prefix/share/applications"; fi
 gjs -m scripts/refresh-shortcut.js install "$bin_dir/area-translator-refresh"
-echo 'Refresh registrado: Ctrl+A (ou sua combinação personalizada existente).'
+echo 'Atalho salvo; será reservado somente durante a captura ativa.'
 echo 'Instalado. Ative a extensão com: gnome-extensions enable area-translator@local'
 echo 'Se o GNOME ainda não encontrar a extensão, saia da sessão e entre novamente.'
 echo "Abra “Tradutor de área” no menu de aplicativos ou execute: $bin_dir/area-translator-ui"

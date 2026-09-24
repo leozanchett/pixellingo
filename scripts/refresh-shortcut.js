@@ -1,7 +1,7 @@
 // GNOME custom shortcuts take effect without reloading Shell.
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-const path = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/pixellingo-refresh/';
+import {SHORTCUT_PATH as path, setShortcutActive} from '../ui/shortcut-state.js';
 const root = new Gio.Settings({schema_id: 'org.gnome.settings-daemon.plugins.media-keys'});
 const settings = at => new Gio.Settings({schema_id: 'org.gnome.settings-daemon.plugins.media-keys.custom-keybinding', path: at});
 function removeLegacyDialogueShortcut() {
@@ -11,15 +11,12 @@ function removeLegacyDialogueShortcut() {
 }
 function install(command) {
     removeLegacyDialogueShortcut();
-    const entries = root.get_strv('custom-keybindings');
     const own = settings(path);
+    const installed = Boolean(own.get_string('command'));
     own.set_string('name', 'PixelLingo — Atualizar tradução');
     own.set_string('command', command);
-    if (!entries.includes(path)) {
-        own.set_string('binding', '<Control>a');
-        root.set_strv('custom-keybindings', [...entries, path]);
-    }
-    if (own.get_string('binding') === '<Super><Shift>r') own.set_string('binding', '<Control>a');
+    if (!installed) own.set_string('binding', '<Control>a');
+    setShortcutActive(false);
     Gio.Settings.sync();
 }
 function remove() {
@@ -42,7 +39,7 @@ if (ARGV[0] === 'install' && ARGV[1]) {
     if (settings(path).get_string('binding') !== '<Control>a') throw new Error('Missing shortcut');
     settings(path).set_string('binding', '<Super><Alt>r');
     install("'/tmp/new refresh'");
-    if (root.get_strv('custom-keybindings').length !== 2) throw new Error('Duplicate shortcut');
+    if (root.get_strv('custom-keybindings').includes(path)) throw new Error('Installer must leave key released');
     if (settings(path).get_string('binding') !== '<Super><Alt>r') throw new Error('User binding overwritten');
     settings(path).set_string('binding', '');
     install("'/tmp/new refresh'");

@@ -3,8 +3,8 @@ import Gdk from 'gi://Gdk?version=4.0';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-export const SHORTCUT_PATH = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/pixellingo-refresh/';
-export const DEFAULT_SHORTCUT = '<Control>a';
+import {SHORTCUT_PATH, DEFAULT_SHORTCUT} from './shortcut-state.js';
+export {SHORTCUT_PATH, DEFAULT_SHORTCUT};
 const ROOT_SCHEMA = 'org.gnome.settings-daemon.plugins.media-keys';
 const CUSTOM_SCHEMA = `${ROOT_SCHEMA}.custom-keybinding`;
 const custom = path => new Gio.Settings({schema_id: CUSTOM_SCHEMA, path});
@@ -76,8 +76,7 @@ export function saveShortcut(value) {
         const conflict = shortcutConflict(binding);
         if (conflict) throw new Error(`Essa combinação já está em uso por “${conflict}”. Escolha outra.`);
     }
-    const root = new Gio.Settings({schema_id: ROOT_SCHEMA});
-    if (!root.get_strv('custom-keybindings').includes(SHORTCUT_PATH))
+    if (!custom(SHORTCUT_PATH).get_string('command'))
         throw new Error('O atalho não está instalado. Execute novamente scripts/install.sh.');
     if (!custom(SHORTCUT_PATH).set_string('binding', binding))
         throw new Error('O Ubuntu não permitiu alterar esse atalho.');

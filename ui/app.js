@@ -104,12 +104,16 @@ function settings() {
     shortcutRow.append(shortcut);
     shortcutRow.append(button('Alterar atalho…', () => showShortcutDialog(window, () => {
         shortcut.label = `Atalho: ${shortcutLabel()}`;
-        message.label = 'Atalho salvo. A alteração já está ativa no Ubuntu.';
+        message.label = 'Atalho salvo. Ele fica reservado somente durante a captura ativa.';
     })));
     box.append(shortcutRow);
     box.append(button('Traduzir agora', async () => {
         await service('Refresh');
         message.label = 'Pedido enviado. A legenda será substituída quando a tradução estiver pronta.';
+    }));
+    box.append(button('Encerrar captura e liberar atalho', async () => {
+        await service('Stop');
+        message.label = 'Captura encerrada. O atalho foi liberado para os outros aplicativos.';
     }));
     box.append(button('Diagnóstico: captura, OCR e tradução', diagnostics));
     box.append(message);

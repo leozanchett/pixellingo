@@ -40,6 +40,30 @@ fn main() -> anyhow::Result<()> {
                 )?
                 .build()
                 .await?;
+            // Installed companion watches this unique owner, including unexpected exits.
+            // It reserves the configured key only while capture is running, without GTK.
+            let executable = std::env::current_exe()?;
+            let guard = executable
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|p| p.join("ui/shortcut-guard.js"));
+            if let Some(guard) = guard.filter(|p| p.is_file()) {
+                let child = std::process::Command::new("gjs")
+                    .arg("-m")
+                    .arg(guard)
+                    .arg(
+                        connection
+                            .unique_name()
+                            .expect("session bus unique name")
+                            .as_str(),
+                    )
+                    .spawn()?;
+                // Reap the companion when it observes our connection closing.
+                std::thread::spawn(move || {
+                    let mut child = child;
+                    let _ = child.wait();
+                });
+            }
             Engine::new(shared, connection)?.run(receiver).await;
             Ok(())
         })
